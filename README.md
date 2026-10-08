@@ -3,11 +3,13 @@
 Equation solver and graphing calculator that lives in your system tray.
 Press the hotkey and a Game Bar style overlay (blue and white) opens over your screen with a top bar and floating Solver and Graph widgets. Press Capture (or C), drag across a math problem anywhere on screen, and Mathbench reads it and solves it. Esc closes the overlay.
 
-## Run it
+## Download
+Get the Windows installer, **Mathbench Setup.exe**, from the [Releases page](https://github.com/meowskers101/mathbench/releases/latest). Run it, pick a folder and click Install. If Windows says "Windows protected your PC" (the installer is not code-signed), click More info, then Run anyway.
+
+## Build it yourself
 1. Install Node.js (https://nodejs.org), LTS version.
-2. Double-click `Start Mathbench.bat`. The first run installs Electron into this folder only.
-3. To make a single portable `Mathbench.exe` that runs without installing (copy it to a USB stick or Drive), run `npm run portable`. The file appears in `dist/`.
-4. To make a normal installer (`Mathbench Setup.exe`), run `npm run dist` in this folder. The installer appears in `dist/`.
+2. In this folder run `npm install`, then `npx electron .` to start it from the source.
+3. `npm run dist` makes the installer (`Mathbench Setup.exe`) in `dist/`.
 
 ## Use it
 - Hotkey: Ctrl + Alt + M (change it in Settings, from the tray icon).
