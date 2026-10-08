@@ -4,6 +4,8 @@ Equation solver, graphing calculator and maths reader for Windows. Everything ru
 
 ## Download
 
+Latest version: **1.12.0**
+
 **[Download the latest installer](https://github.com/meowskers101/mathbench/releases/latest)** (Mathbench Setup .exe, Windows 10 or 11, 64-bit).
 
 1. Run the installer, choose a folder and click Install. It adds Mathbench to the Start menu and the desktop.
