@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mathbench settings</title>
+<style>
+  :root { --blue: #1f4fd8; --blue-soft: #e2eafd; --ink: #14213d; --muted: #5b6b8c; --line: #d5dff5; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 22px 24px; font: 15px/1.5 "Segoe UI", system-ui, sans-serif; color: var(--ink); background: #fff; }
+  h1 { margin: 0 0 4px; font-size: 20px; }
+  h1 span { color: var(--blue); }
+  p { margin: 0 0 12px; color: var(--muted); font-size: 13.5px; }
+  label { display: grid; gap: 4px; font-weight: 600; font-size: 13.5px; margin-top: 14px; }
+  input[type=text], input[type=password], select { border: 1px solid #b8c6e8; border-radius: 8px; padding: 9px 10px; font: 14px "Segoe UI", system-ui, sans-serif; width: 100%; color: var(--ink); background: #fff; }
+  input:focus, select:focus { outline: 2px solid var(--blue); outline-offset: 1px; border-color: var(--blue); }
+  .row { display: flex; gap: 8px; align-items: center; margin-top: 18px; flex-wrap: wrap; }
+  button { border: 1px solid var(--blue); background: var(--blue); color: #fff; border-radius: 8px; padding: 9px 18px; font: 600 14px "Segoe UI", sans-serif; cursor: pointer; }
+  button.ghost { background: #fff; color: var(--blue); }
+  button:hover { filter: brightness(1.06); }
+  #msg { margin-top: 12px; font-size: 13.5px; min-height: 1.4em; }
+  #msg.err { color: #b3261e; } #msg.ok { color: #0f7b57; }
+  .note { background: var(--blue-soft); border-radius: 8px; padding: 10px 12px; font-size: 13px; color: var(--ink); margin-top: 14px; }
+  small { font-weight: 400; color: var(--muted); }
+</style>
+</head>
+<body>
+<h1>Math<span>bench</span> settings</h1>
+<p>Overlay hotkey.</p>
+
+<label>Overlay hotkey
+  <select id="hk">
+    <option value="Control+Alt+M">Ctrl + Alt + M</option>
+    <option value="Control+Shift+M">Ctrl + Shift + M</option>
+    <option value="Control+Shift+Space">Ctrl + Shift + Space</option>
+    <option value="Alt+Shift+M">Alt + Shift + M</option>
+    <option value="F9">F9</option>
+    <option value="custom">Custom…</option>
+  </select>
+  <input type="text" id="hk-custom" placeholder="Example: Control+Alt+K" hidden>
+  <small>The Windows key combinations (such as Win + G) are reserved by Windows and cannot be used.</small>
+</label>
+
+<label>Capture action to start on
+  <select id="mode">
+    <option value="math">Math problem</option>
+    <option value="copy">Copy image</option>
+    <option value="save">Save image</option>
+    <option value="paste">Solve &amp; paste</option>
+  </select>
+</label>
+
+<label>Do it for me hotkey
+  <select id="phk">
+    <option value="Control+Alt+P">Ctrl + Alt + P</option>
+    <option value="Control+Shift+P">Ctrl + Shift + P</option>
+    <option value="Alt+Shift+P">Alt + Shift + P</option>
+    <option value="F10">F10</option>
+    <option value="">Off</option>
+  </select>
+  <small>Press this on a worksheet or quiz page and type what to do, such as "do 3", "all", "1-4 as decimals" or "#2 in the box below". Mathbench reads the screen, solves each problem and types the answer into its box. With the cursor already in a box, just press Enter.</small>
+</label>
+
+<div class="note">Mathbench reads problems on this computer with its own built-in reader. Nothing is sent anywhere, no account or key is needed. Nothing is captured until you open the overlay and press Capture.</div>
+
+<div class="row">
+  <button id="save">Save</button>
+</div>
+<div id="msg" role="status"></div>
+
+<script>
+(async function () {
+  const $ = s => document.querySelector(s);
+  const S = await window.mbDesktop.getSettings();
+  const presets = Array.from($('#hk').options).map(o => o.value);
+  if (presets.includes(S.hotkey)) $('#hk').value = S.hotkey; else { $('#hk').value = 'custom'; $('#hk-custom').hidden = false; $('#hk-custom').value = S.hotkey; }
+  $('#mode').value = S.mode;
+  $('#phk').value = S.pasteHotkey || '';
+  $('#hk').addEventListener('change', () => { $('#hk-custom').hidden = $('#hk').value !== 'custom'; });
+  const say = (t, cls) => { const m = $('#msg'); m.textContent = t; m.className = cls || ''; };
+  $('#save').addEventListener('click', async () => {
+    const hk = $('#hk').value === 'custom' ? $('#hk-custom').value : $('#hk').value;
+    const r = await window.mbDesktop.saveSettings({ hotkey: hk, mode: $('#mode').value, pasteHotkey: $('#phk').value });
+    say((r.ok ? 'Saved. ' : '') + r.notes.join(' '), r.ok ? 'ok' : 'err');
+  });
+})();
+</script>
+</body>
+</html>

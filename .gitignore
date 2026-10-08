@@ -1,0 +1,13 @@
+# installed and built files (rebuilt with npm install / npm run dist)
+node_modules/
+dist/
+
+# local backups made while developing
+_backup-before-clean/
+_backup-before-formula-ai/
+
+# logs and scratch files
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db

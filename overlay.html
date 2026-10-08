@@ -1,0 +1,595 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mathbench overlay</title>
+<style>
+  :root { --blue: #1f4fd8; --blue-2: #3b6cff; --blue-3: #6f93ff; --soft: #e2eafd; --ink: #14213d; --muted: #5b6b8c; --line: #d5dff5; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; font-family: "Segoe UI", system-ui, sans-serif; color: var(--ink); -webkit-user-select: none; user-select: none; }
+  #tint { position: fixed; inset: 0; background: radial-gradient(ellipse at 50% 0%, rgba(40, 90, 230, 0.34), rgba(8, 20, 55, 0.5) 60%), rgba(8, 20, 55, 0.18); animation: fade 160ms ease-out; }
+  @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+
+  /* top bar */
+  #bar { position: fixed; top: 18px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 4px; padding: 6px; background: #fff; border-radius: 16px; box-shadow: 0 12px 38px rgba(8, 20, 55, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.7); animation: drop 180ms ease-out; max-width: calc(100vw - 20px); z-index: 20; }
+  @keyframes drop { from { opacity: 0; transform: translateX(-50%) translateY(-10px); } to { opacity: 1; transform: translateX(-50%); } }
+  .logo { display: flex; align-items: center; gap: 8px; padding: 0 10px 0 4px; font-weight: 700; font-size: 15px; letter-spacing: -0.01em; }
+  .logo i { width: 32px; height: 32px; border-radius: 10px; background: linear-gradient(135deg, var(--blue), var(--blue-2)); display: grid; place-items: center; }
+  .logo i svg { width: 19px; height: 19px; }
+  .logo b { color: var(--blue); font-weight: 700; }
+  .sep { width: 1px; align-self: stretch; background: var(--line); margin: 5px 4px; }
+  .tb { display: flex; align-items: center; gap: 8px; border: 0; background: transparent; color: var(--ink); padding: 8px 13px 8px 10px; border-radius: 11px; font: 600 14px "Segoe UI", sans-serif; cursor: pointer; white-space: nowrap; }
+  .tb svg, .ib svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+  .tb:hover, .ib:hover { background: var(--soft); }
+  .tb[aria-pressed="true"] { background: var(--blue); color: #fff; }
+  .ib { width: 38px; height: 38px; border: 0; background: transparent; border-radius: 11px; display: grid; place-items: center; color: var(--muted); cursor: pointer; }
+  .ib:hover { color: var(--blue); }
+  #clock { white-space: nowrap; font: 600 14px "Segoe UI", sans-serif; color: var(--muted); padding: 0 10px; font-variant-numeric: tabular-nums; }
+  button:focus-visible { outline: 2px solid var(--blue-2); outline-offset: 1px; }
+  #tip { position: fixed; top: 80px; left: 50%; transform: translateX(-50%); background: rgba(255, 255, 255, 0.95); padding: 6px 14px; border-radius: 999px; font-size: 13px; box-shadow: 0 4px 16px rgba(8, 20, 55, 0.35); z-index: 19; pointer-events: none; white-space: nowrap; max-width: calc(100vw - 20px); overflow: hidden; text-overflow: ellipsis; }
+  #tip b { color: var(--blue); }
+
+  /* widgets */
+  .w { position: fixed; display: flex; flex-direction: column; background: #fff; border-radius: 14px; box-shadow: 0 16px 48px rgba(8, 20, 55, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.5); overflow: hidden; resize: both; min-width: 330px; min-height: 260px; animation: rise 180ms ease-out; z-index: 10; }
+  @keyframes rise { from { opacity: 0; transform: translateY(10px) scale(0.985); } to { opacity: 1; transform: none; } }
+  .w-h { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 6px 0 14px; background: linear-gradient(90deg, var(--blue), var(--blue-2)); color: #fff; cursor: grab; flex: none; }
+  .w-h:active { cursor: grabbing; }
+  .w-h svg { width: 17px; height: 17px; stroke: #fff; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+  .w-t { font-weight: 600; font-size: 14px; flex: 1; }
+  .w-x { width: 30px; height: 30px; border: 0; background: transparent; color: #fff; border-radius: 8px; cursor: pointer; display: grid; place-items: center; }
+  .w-x:hover { background: rgba(255, 255, 255, 0.2); }
+  .w-x svg { width: 15px; height: 15px; }
+  .w iframe { flex: 1; border: 0; width: 100%; min-height: 0; background: #fff; }
+  .w.drag iframe, .w.sizing iframe { pointer-events: none; }
+
+  /* capture */
+  #cap { position: fixed; inset: 0; z-index: 50; cursor: crosshair; display: none; background: #0b1a3a; }
+  #cap.on { display: block; }
+  #cap img { position: absolute; left: 0; top: 0; pointer-events: none; -webkit-user-drag: none; }
+  #dim { position: absolute; inset: 0; background: rgba(8, 20, 55, 0.5); }
+  #sel { position: absolute; display: none; border: 2px solid var(--blue-2); box-shadow: 0 0 0 100vmax rgba(8, 20, 55, 0.5); pointer-events: none; }
+  #sel i { position: absolute; width: 9px; height: 9px; background: #fff; border: 2px solid var(--blue-2); border-radius: 2px; }
+  #sel i:nth-child(1) { left: -6px; top: -6px; } #sel i:nth-child(2) { right: -6px; top: -6px; } #sel i:nth-child(3) { left: -6px; bottom: -6px; } #sel i:nth-child(4) { right: -6px; bottom: -6px; }
+  #size { position: absolute; display: none; background: #fff; color: var(--blue); font: 600 12px "Segoe UI", sans-serif; padding: 3px 9px; border-radius: 999px; box-shadow: 0 2px 10px rgba(8, 20, 55, 0.35); pointer-events: none; }
+  #capbar { position: absolute; top: 18px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 4px; padding: 6px; background: #fff; border-radius: 16px; box-shadow: 0 12px 38px rgba(8, 20, 55, 0.5); cursor: default; max-width: calc(100vw - 20px); }
+  #capbar .tb kbd { font: 600 11px "Segoe UI", sans-serif; opacity: 0.6; border: 1px solid currentColor; border-radius: 4px; padding: 0 4px; margin-left: 2px; }
+  #caphint { position: absolute; top: 80px; left: 50%; transform: translateX(-50%); background: rgba(255, 255, 255, 0.96); padding: 6px 14px; border-radius: 999px; font-size: 13px; box-shadow: 0 4px 16px rgba(8, 20, 55, 0.35); pointer-events: none; white-space: nowrap; }
+  #toast { position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%); background: #fff; color: var(--ink); padding: 9px 18px; border-radius: 999px; font: 600 14px "Segoe UI", sans-serif; box-shadow: 0 8px 28px rgba(8, 20, 55, 0.5); z-index: 60; display: none; }
+
+  /* do it for me */
+  #as { position: fixed; inset: 0; z-index: 55; display: none; background: #0b1a3a; }
+  #as.on { display: block; }
+  #as-img { position: absolute; left: 0; top: 0; pointer-events: none; -webkit-user-drag: none; }
+  #as-dim { position: absolute; inset: 0; background: rgba(8, 20, 55, 0.22); pointer-events: none; }
+  #as-marks { position: absolute; left: 0; top: 0; }
+  .as-p { position: absolute; border: 2px solid rgba(59, 108, 255, 0.55); border-radius: 6px; background: rgba(59, 108, 255, 0.06); cursor: pointer; }
+  .as-p:hover { background: rgba(59, 108, 255, 0.14); }
+  .as-p.on { border-color: var(--blue-2); background: rgba(59, 108, 255, 0.16); box-shadow: 0 0 0 3px rgba(59, 108, 255, 0.25); }
+  .as-n { position: absolute; left: -12px; top: -12px; min-width: 24px; height: 24px; padding: 0 6px; border-radius: 12px; background: var(--blue); color: #fff; font: 700 13px/24px "Segoe UI", sans-serif; text-align: center; box-shadow: 0 2px 8px rgba(8, 20, 55, 0.4); }
+  .as-p.sm .as-n { left: auto; right: calc(100% + 3px); top: 50%; transform: translateY(-50%); min-width: 17px; height: 17px; padding: 0 4px; font-size: 10.5px; line-height: 17px; border-radius: 9px; }
+  .as-b { position: absolute; border: 2px dashed rgba(13, 122, 83, 0.7); border-radius: 5px; cursor: pointer; }
+  .as-b:hover { background: rgba(13, 122, 83, 0.10); }
+  .as-b.on { border-style: solid; border-color: #0d7a53; background: rgba(13, 122, 83, 0.14); box-shadow: 0 0 0 3px rgba(13, 122, 83, 0.25); }
+  .as-a { position: absolute; white-space: nowrap; padding: 3px 10px; border-radius: 999px; background: #0d7a53; color: #fff; font: 600 14px "Segoe UI", sans-serif; box-shadow: 0 4px 14px rgba(8, 20, 55, 0.4); pointer-events: none; }
+  .as-a.err { background: #b92f2f; }
+  #as-lines { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
+  #as { cursor: crosshair; }
+  #as-bar { cursor: default; }
+  .as-sel { position: absolute; border: 2px solid var(--blue-2); background: rgba(59, 108, 255, 0.10); border-radius: 4px; pointer-events: none; }
+  .as-p.pick { border-color: #0d7a53; background: rgba(13, 122, 83, 0.10); }
+  .as-p.pick .as-n { background: #0d7a53; }
+  #as-bar { position: absolute; top: 18px; left: 50%; transform: translateX(-50%); width: min(680px, calc(100vw - 24px)); background: #fff; border-radius: 16px; box-shadow: 0 12px 38px rgba(8, 20, 55, 0.5); padding: 8px; display: grid; gap: 6px; }
+  #as-row { display: flex; gap: 6px; align-items: center; }
+  #as-row .logo { padding-right: 4px; cursor: grab; }
+  #as-bar.low { top: auto; bottom: 18px; }
+  #as-in { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; font: 500 15px "Segoe UI", sans-serif; color: var(--ink); outline: none; -webkit-user-select: text; user-select: text; }
+  #as-in:focus { border-color: var(--blue-2); box-shadow: 0 0 0 3px rgba(59, 108, 255, 0.18); }
+  #as-go { border: 0; background: var(--blue); color: #fff; border-radius: 10px; padding: 9px 16px; font: 600 14px "Segoe UI", sans-serif; cursor: pointer; white-space: nowrap; }
+  #as-go:disabled { opacity: 0.5; cursor: default; }
+  #as-chk { border: 1px solid var(--line); background: #fff; color: var(--ink); border-radius: 10px; padding: 8px 12px; font: 600 13px "Segoe UI", sans-serif; cursor: pointer; white-space: nowrap; }
+  #as-st { font-size: 13px; color: var(--muted); padding: 0 6px 2px; min-height: 18px; }
+  #as-words { display: flex; align-items: center; gap: 8px; padding: 0 4px; flex-wrap: wrap; }
+  #as-words .lbl { font: 600 11px "Segoe UI", sans-serif; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+  #as-words .row-break { flex-basis: 100%; height: 0; }
+  #as-words .lbl { min-width: 44px; }
+  #as-words .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+  #as-words .seg button { border: 0; background: #fff; color: var(--ink); padding: 5px 11px; font: 600 12.5px "Segoe UI", sans-serif; cursor: pointer; }
+  #as-words .seg button + button { border-left: 1px solid var(--line); }
+  #as-steps button[aria-pressed="true"] { background: #0d7a53; color: #fff; }
+  #as-words .seg button[aria-pressed="true"] { background: var(--blue); color: #fff; }
+  #as-words .ex { font-size: 12.5px; color: var(--muted); font-family: Consolas, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
+  #as-st b { color: var(--ink); }
+  #as-help { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 6px 6px 2px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+  #as-help kbd { font: 600 11px "Segoe UI", sans-serif; color: var(--ink); background: var(--soft); border-radius: 4px; padding: 1px 5px; margin-right: 3px; }
+  #as-chip { display: none; font: 600 11.5px "Segoe UI", sans-serif; color: #7a3fb8; background: #f1e8fb; border-radius: 999px; padding: 3px 10px; white-space: nowrap; }
+  #as-chip.on { display: inline-block; }
+  #as-st .warn { color: #9a5b00; }
+  #as-st .bad { color: #b92f2f; }
+  @media (max-width: 900px) { .tb span.t { display: none; } .tb { padding: 8px 10px; } .logo b { display: none; } }
+</style>
+</head>
+<body>
+<div id="tint"></div>
+
+<div id="bar" role="toolbar" aria-label="Mathbench">
+  <div class="logo"><i aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M18 5H7l6 7-6 7h11"/></svg></i><span>Math<b>bench</b></span></div>
+  <div class="sep"></div>
+  <button class="tb" id="b-cap" title="Select part of the screen (C)"><svg viewBox="0 0 24 24"><path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4"/></svg><span class="t">Capture</span></button>
+  <button class="tb" id="b-solver" aria-pressed="false" title="Equation solver (S)"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></svg><span class="t">Solver</span></button>
+  <button class="tb" id="b-graph" aria-pressed="false" title="Graphing calculator (G)"><svg viewBox="0 0 24 24"><path d="M4 4v16h16"/><path d="M7 15c3-9 6 4 11-8"/></svg><span class="t">Graph</span></button>
+  <div class="sep"></div>
+  <span id="clock" aria-label="Time"></span>
+  <button class="ib" id="b-set" title="Settings" aria-label="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
+  <button class="ib" id="b-close" title="Close (Esc)" aria-label="Close overlay"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+</div>
+<div id="tip">Open a widget, or press <b>C</b> to capture a math problem from your screen. <b>Esc</b> closes.</div>
+<div id="widgets"></div>
+
+<div id="cap">
+  <img id="capimg" alt="">
+  <div id="dim"></div>
+  <div id="sel"><i></i><i></i><i></i><i></i></div>
+  <div id="size"></div>
+  <div id="capbar">
+    <button class="tb" data-mode="math" aria-pressed="true"><svg viewBox="0 0 24 24"><path d="M12 4v8M8 8h8M8 19h8"/></svg><span class="t">Math problem</span><kbd>1</kbd></button>
+    <button class="tb" data-mode="copy" aria-pressed="false"><svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg><span class="t">Copy image</span><kbd>2</kbd></button>
+    <button class="tb" data-mode="save" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg><span class="t">Save image</span><kbd>3</kbd></button>
+    <button class="tb" data-mode="paste" aria-pressed="false" title="Solve it and paste the answer where you were typing"><svg viewBox="0 0 24 24"><rect x="6" y="4" width="12" height="16" rx="2"/><path d="M9 4.5h6M9 11h6M9 15h4"/></svg><span class="t">Solve &amp; paste</span><kbd>4</kbd></button>
+    <div class="sep"></div>
+    <button class="tb" id="c-full"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="12" rx="2"/><path d="M9 21h6"/></svg><span class="t">Whole screen</span></button>
+    <button class="ib" id="c-x" title="Cancel (Esc)" aria-label="Cancel capture"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+  </div>
+  <div id="caphint">Drag across the area you want. <b>Esc</b> to cancel.</div>
+</div>
+
+<div id="as" aria-label="Do it for me">
+  <img id="as-img" alt="">
+  <div id="as-dim"></div>
+  <div id="as-marks"><svg id="as-lines"></svg></div>
+  <div id="as-bar" role="dialog" aria-label="Tell Mathbench what to do">
+    <div id="as-row">
+      <div class="logo"><i aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M18 5H7l6 7-6 7h11"/></svg></i></div>
+      <input id="as-in" type="text" autocomplete="off" spellcheck="false" placeholder="Tell me what to do: &quot;do 3&quot;, &quot;all&quot;, &quot;1-4 as decimals&quot;, &quot;#2 in the box below&quot;" aria-label="Directions">
+      <button id="as-chk" type="button" title="Solve and show the answers without typing them (Alt+Enter)">Answers only</button>
+      <button id="as-go" type="button" title="Enter">Do it</button>
+    </div>
+    <div id="as-words">
+      <span class="lbl">Words</span>
+      <div class="seg" role="group" aria-label="How much to write">
+        <button type="button" data-words="none" aria-pressed="true" title="Just the answer: 6">Without words</button>
+        <button type="button" data-words="less" aria-pressed="false" title="With its letter: x = 6">Less words</button>
+        <button type="button" data-words="with" aria-pressed="false" title="A sentence: The answer is x = 6.">With words</button>
+        <button type="button" data-words="more" aria-pressed="false" title="The working, then the answer">More words</button>
+      </div>
+      <span class="row-break" aria-hidden="true"></span>
+      <span class="lbl">Work</span>
+      <div class="seg" id="as-steps" role="group" aria-label="How much working">
+        <button type="button" data-steps="off" aria-pressed="true" title="No working, just the answer">Off</button>
+        <button type="button" data-steps="few" aria-pressed="false" title="Just the key step">Few</button>
+        <button type="button" data-steps="some" aria-pressed="false" title="The main steps">Some</button>
+        <button type="button" data-steps="all" aria-pressed="false" title="Every small step, with a check at the end">All steps</button>
+      </div>
+      <span class="ex" id="as-ex">6</span>
+      <span id="as-chip" title="In OneNote the answer is typed in a new note box, then dragged beside its problem">OneNote mode</span>
+    </div>
+    <div id="as-st" aria-live="polite">Reading your screen…</div>
+    <div id="as-help"><span><kbd>Enter</kbd>Do it</span><span><kbd>Alt+Enter</kbd>Answers only</span><span><kbd>Click</kbd>a problem</span><span><kbd>Shift+click</kbd>add more</span><span><kbd>Drag</kbd>around any problem</span><span><kbd>Ctrl+1–4</kbd>words</span><span><kbd>Ctrl+5</kbd>working</span><span><kbd>Esc</kbd>close</span></div>
+  </div>
+</div>
+<div id="toast" role="status"></div>
+<script src="assist.js"></script>
+
+<script>
+(async function () {
+  const $ = s => document.querySelector(s);
+  const info = await window.mbOverlay.init();
+  if (!info) { window.mbOverlay.cancel(); return; }
+  let mode = info.mode || 'math';
+  const sel = $('#sel'), size = $('#size');
+  const store = (k, v) => { try { if (v === undefined) return JSON.parse(localStorage.getItem(k) || 'null'); localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* ignore */ } return null; };
+
+  /* clock */
+  const tick = () => { $('#clock').textContent = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); };
+  tick(); setInterval(tick, 15000);
+
+  /* ----- widgets ----- */
+  const DEFS = {
+    solver: { title: 'Equation solver', src: 'renderer/index.html?embed=1&view=solver', w: 500, h: 700, icon: '<path d="M5 12h14M12 5v14"/>' },
+    graph: { title: 'Graphing calculator', src: 'renderer/index.html?embed=1&view=graph', w: 820, h: 620, icon: '<path d="M4 4v16h16"/><path d="M7 15c3-9 6 4 11-8"/>' }
+  };
+  const open = {};
+  let z = 10;
+  const saved = store('mbo-pos') || {};
+  function place(el, id) {
+    const d = DEFS[id], s = saved[id] || {};
+    const vw = innerWidth, vh = innerHeight;
+    const w = Math.min(s.w || d.w, vw - 24), h = Math.min(s.h || d.h, vh - 110);
+    const n = Object.keys(open).length;
+    const x = Math.min(Math.max(8, s.x != null ? s.x : (id === 'solver' ? 40 : vw - w - 40)), vw - 60), y = Math.min(Math.max(70, s.y != null ? s.y : 110 + n * 12), vh - 60);
+    Object.assign(el.style, { left: x + 'px', top: y + 'px', width: w + 'px', height: h + 'px' });
+  }
+  function savePos(id) {
+    const el = open[id] && open[id].el; if (!el) return;
+    const r = el.getBoundingClientRect();
+    saved[id] = { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) };
+    store('mbo-pos', saved);
+  }
+  function openWidget(id) {
+    if (open[id]) { toFront(id); return open[id]; }
+    const d = DEFS[id];
+    const el = document.createElement('div');
+    el.className = 'w'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', d.title);
+    el.innerHTML = '<div class="w-h"><svg viewBox="0 0 24 24">' + d.icon + '</svg><span class="w-t">' + d.title + '</span><button class="w-x" aria-label="Close ' + d.title + '"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div><iframe title="' + d.title + '"></iframe>';
+    $('#widgets').appendChild(el);
+    place(el, id);
+    const fr = el.querySelector('iframe');
+    const w = { el: el, frame: fr, ready: false, queue: [] };
+    fr.addEventListener('load', () => { w.ready = true; w.queue.splice(0).forEach(m => fr.contentWindow.postMessage(m, '*')); });
+    fr.src = d.src;
+    open[id] = w;
+    $('#b-' + id).setAttribute('aria-pressed', 'true');
+    const head = el.querySelector('.w-h');
+    let drag = null;
+    head.addEventListener('pointerdown', e => { if (e.target.closest('.w-x')) return; toFront(id); const r = el.getBoundingClientRect(); drag = { dx: e.clientX - r.left, dy: e.clientY - r.top }; el.classList.add('drag'); head.setPointerCapture(e.pointerId); });
+    head.addEventListener('pointermove', e => { if (!drag) return; el.style.left = Math.min(Math.max(-el.offsetWidth + 80, e.clientX - drag.dx), innerWidth - 80) + 'px'; el.style.top = Math.min(Math.max(60, e.clientY - drag.dy), innerHeight - 40) + 'px'; });
+    const end = () => { if (drag) { drag = null; el.classList.remove('drag'); savePos(id); } };
+    head.addEventListener('pointerup', end); head.addEventListener('pointercancel', end);
+    el.addEventListener('pointerdown', () => toFront(id));
+    el.addEventListener('mouseup', () => savePos(id));
+    el.addEventListener('pointerdown', e => { const r = el.getBoundingClientRect(); if (e.clientX > r.right - 22 && e.clientY > r.bottom - 22) el.classList.add('sizing'); });
+    window.addEventListener('pointerup', () => el.classList.remove('sizing'));
+    el.querySelector('.w-x').addEventListener('click', () => closeWidget(id));
+    $('#tip').style.display = 'none';
+    return w;
+  }
+  function toFront(id) { if (open[id]) open[id].el.style.zIndex = ++z; }
+  function closeWidget(id) { if (!open[id]) return; savePos(id); open[id].el.remove(); delete open[id]; $('#b-' + id).setAttribute('aria-pressed', 'false'); }
+  function toggleWidget(id) { if (open[id]) closeWidget(id); else openWidget(id); }
+  function send(id, msg) { const w = openWidget(id); if (w.ready) w.frame.contentWindow.postMessage(msg, '*'); else w.queue.push(msg); }
+  $('#b-solver').addEventListener('click', () => toggleWidget('solver'));
+  $('#b-graph').addEventListener('click', () => toggleWidget('graph'));
+
+  /* ----- capture ----- */
+  const cap = $('#cap'), capimg = $('#capimg');
+  capimg.src = info.image;
+  /* the picture covers the whole display; line it up with the display even if the window sits a little off it */
+  const bw = info.width || innerWidth, bh = info.height || innerHeight;
+  let ox = 0, oy = 0;
+  function align() {
+    ox = (info.x != null && window.screenX != null) ? window.screenX - info.x : 0;
+    oy = (info.y != null && window.screenY != null) ? window.screenY - info.y : 0;
+    if (Math.abs(ox) > 200 || Math.abs(oy) > 200) { ox = 0; oy = 0; }
+    Object.assign(capimg.style, { left: -ox + 'px', top: -oy + 'px', width: bw + 'px', height: bh + 'px' });
+  }
+  align(); addEventListener('resize', align);
+  let start = null, rect = null, busy = false;
+  function setMode(m, remember) {
+    mode = m;
+    document.querySelectorAll('#capbar [data-mode]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.mode === m)));
+    if (remember) window.mbOverlay.setMode(m);
+  }
+  function startCapture() { busy = false; start = null; rect = null; sel.style.display = 'none'; size.style.display = 'none'; $('#dim').style.display = 'block'; $('#caphint').style.display = ''; cap.classList.add('on'); setMode(mode, false); }
+  function endCapture() { cap.classList.remove('on'); }
+  function toast(t) { const el = $('#toast'); el.textContent = t; el.style.display = 'block'; clearTimeout(toast.t); toast.t = setTimeout(() => { el.style.display = 'none'; }, 2200); }
+  function cropData(r) {
+    const k = capimg.naturalWidth / bw, c = document.createElement('canvas');
+    const iw = capimg.naturalWidth, ih = capimg.naturalHeight;
+    const sx = r ? Math.max(0, Math.round((r.x + ox) * k)) : 0, sy = r ? Math.max(0, Math.round((r.y + oy) * k)) : 0;
+    const sw = r ? Math.min(iw - sx, Math.round(r.w * k)) : iw, sh = r ? Math.min(ih - sy, Math.round(r.h * k)) : ih;
+    c.width = Math.max(1, sw); c.height = Math.max(1, sh);
+    c.getContext('2d').drawImage(capimg, sx, sy, sw, sh, 0, 0, c.width, c.height);
+    return c.toDataURL('image/png');
+  }
+  function finish(r) {
+    if (busy) return; busy = true;
+    const data = cropData(r);
+    endCapture();
+    if (mode === 'copy') { window.mbOverlay.copyImage(data); toast('Copied to the clipboard'); }
+    else if (mode === 'save') { window.mbOverlay.saveImage(data); toast('Saved to Pictures / Mathbench captures'); }
+    else if (mode === 'paste') { window.mbOverlay.solvePaste(data); }   /* the overlay closes; the answer is pasted where you were typing */
+    else { send('solver', { mb: 1, type: 'image', data: data }); toast('Reading the problem…'); }
+  }
+  function draw(e) {
+    const x0 = Math.min(start.x, e.clientX), y0 = Math.min(start.y, e.clientY), w = Math.abs(e.clientX - start.x), h = Math.abs(e.clientY - start.y);
+    rect = { x: x0, y: y0, w: w, h: h };
+    Object.assign(sel.style, { display: 'block', left: x0 + 'px', top: y0 + 'px', width: w + 'px', height: h + 'px' });
+    size.textContent = Math.round(w * info.ratio) + ' × ' + Math.round(h * info.ratio);
+    Object.assign(size.style, { display: 'block', left: Math.min(x0, innerWidth - 100) + 'px', top: Math.max(8, y0 - 30) + 'px' });
+    $('#dim').style.display = 'none'; $('#caphint').style.display = 'none';
+  }
+  cap.addEventListener('pointerdown', e => { if (e.target.closest('#capbar') || e.button !== 0) return; e.preventDefault(); start = { x: e.clientX, y: e.clientY }; rect = null; });
+  cap.addEventListener('pointermove', e => { if (start && !busy) draw(e); });
+  cap.addEventListener('pointerup', e => {
+    if (!start || busy) return;
+    draw(e); const r = rect; start = null;
+    if (r && r.w >= 6 && r.h >= 6) finish(r); else { sel.style.display = 'none'; size.style.display = 'none'; $('#dim').style.display = 'block'; $('#caphint').style.display = ''; }
+  });
+  cap.addEventListener('contextmenu', e => { e.preventDefault(); endCapture(); });
+  cap.addEventListener('dragstart', e => e.preventDefault());
+  document.querySelectorAll('#capbar [data-mode]').forEach(b => b.addEventListener('click', () => setMode(b.dataset.mode, true)));
+  $('#c-full').addEventListener('click', () => finish(null));
+  $('#c-x').addEventListener('click', endCapture);
+  $('#b-cap').addEventListener('click', startCapture);
+
+  $('#b-set').addEventListener('click', () => window.mbOverlay.openSettings());
+  $('#b-close').addEventListener('click', () => window.mbOverlay.cancel());
+  window.addEventListener('keydown', e => {
+    const inField = e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
+    if (e.key === 'Escape') { if (cap.classList.contains('on')) endCapture(); else window.mbOverlay.cancel(); }
+    else if (info.assist) { /* typing goes to the directions box */ }
+    else if (cap.classList.contains('on')) {
+      if (e.key === '1') setMode('math', true); else if (e.key === '2') setMode('copy', true); else if (e.key === '3') setMode('save', true); else if (e.key === '4') setMode('paste', true); else if (e.key === 'Enter') finish(null);
+    } else if (!inField && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      const k = e.key.toLowerCase();
+      if (k === 'c') startCapture(); else if (k === 's') toggleWidget('solver'); else if (k === 'g') toggleWidget('graph');
+    }
+  });
+
+
+  /* ----- do it for me: the whole screen, typed directions, answers typed into their boxes ----- */
+  async function startAssist() {
+    const as = $('#as'), img = $('#as-img'), marks = $('#as-marks'), svg = $('#as-lines'), input = $('#as-in'), st = $('#as-st');
+    as.classList.add('on'); $('#bar').style.display = 'none'; $('#tip').style.display = 'none'; $('#tint').style.display = 'none';
+    img.src = info.image;
+    const k = () => capimg.naturalWidth / bw;   /* screenshot pixels per CSS pixel */
+    function lay() { Object.assign(img.style, { left: -ox + 'px', top: -oy + 'px', width: bw + 'px', height: bh + 'px' }); Object.assign(marks.style, { left: -ox + 'px', top: -oy + 'px', width: bw + 'px', height: bh + 'px' }); svg.setAttribute('width', bw); svg.setAttribute('height', bh); }
+    lay(); addEventListener('resize', lay);
+    input.focus();
+    /* how much to write: remembered between uses */
+    /* two separate choices: how many words, and how much working */
+    const EX = { none: '6', less: 'x = 6', with: 'The answer is x = 6.', more: 'To solve 2x+5=17: … The answer is x = 6.' };
+    const WORK = { few: '2x = 12', some: '2x + 5 = 17 ↵ 2x = 12 ↵ x = 12 ÷ 2', all: '2x + 5 − 5 = 17 − 5 ↵ 2x = 12 ↵ 2x ÷ 2 = 12 ÷ 2 ↵ x = 6 ↵ check ✓' };
+    let words = 'none', steps = 'off';
+    try {
+      const w = localStorage.getItem('mbo-words'), k = localStorage.getItem('mbo-work');
+      if (EX[w]) words = w;
+      if (k === 'off' || WORK[k]) steps = k;
+      else if (w === 'work') { words = 'with'; const old = localStorage.getItem('mbo-steps'); steps = WORK[old] ? old : 'some'; }   /* from the single Show work button before */
+    } catch (e) { /* ignore */ }
+    /* what the solver gets: "none", "with+work-all", … */
+    const style = () => words + (steps === 'off' ? '' : '+' + (steps === 'some' ? 'work' : 'work-' + steps));
+    const example = () => steps === 'off' ? EX[words] : ({
+      none: WORK[steps] + ' ↵ x = 6',
+      less: WORK[steps] + ' ↵ Answer: x = 6',
+      with: (steps === 'all' ? 'Subtract 5 from both sides ↵ ' : '') + WORK[steps] + ' ↵ Answer: x = 6',
+      more: 'To solve 2x+5=17, get x on its own ↵ ' + WORK[steps] + ' ↵ So the answer is x = 6.'
+    })[words];
+    function setWords(w, remember) {
+      words = w;
+      document.querySelectorAll('#as-words [data-words]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.words === w)));
+      document.querySelectorAll('#as-steps [data-steps]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.steps === steps)));
+      $('#as-ex').textContent = example();
+      if (remember) { try { localStorage.setItem('mbo-words', w); localStorage.setItem('mbo-work', steps); } catch (e) { /* ignore */ } }
+    }
+    document.querySelectorAll('#as-steps [data-steps]').forEach(b => b.addEventListener('click', () => { steps = b.dataset.steps; setWords(words, true); ready = null; input.focus(); }));
+    setWords(words, false);
+    /* Ctrl+1 … Ctrl+5: the answer styles, left to right */
+    const ORDER = ['none', 'less', 'with', 'more'];
+    addEventListener('keydown', e => {
+      if (!e.ctrlKey || e.altKey || !/^[1-5]$/.test(e.key)) return;
+      e.preventDefault();
+      /* Ctrl+1 to 4: the words; Ctrl+5: the working, off, few, some, all in turn */
+      if (e.key === '5') { steps = { off: 'few', few: 'some', some: 'all', all: 'off' }[steps]; setWords(words, true); }
+      else setWords(ORDER[+e.key - 1], true);
+      ready = null; preview();
+    });
+    document.querySelectorAll('#as-words [data-words]').forEach(b => b.addEventListener('click', () => { setWords(b.dataset.words, true); ready = null; input.focus(); }));
+    let A = null, page = null, manual = {}, picked = null, busy = false;
+    let ready = null, readyFor = null;   /* answers worked out by "Answers only", and for which directions */
+    let dragPick = null, dragStart = null;   /* a part of the screen you dragged around */
+    const css = r => ({ left: r.x / k() + 'px', top: r.y / k() + 'px', width: r.w / k() + 'px', height: r.h / k() + 'px' });
+    const say = h => { st.innerHTML = h; };
+    const esc = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+    /* the page's grey levels, for finding boxes and rows the text reader skipped */
+    try { await capimg.decode(); } catch (e) { /* ignore */ }
+    const W = capimg.naturalWidth, H = capimg.naturalHeight, cv = document.createElement('canvas');
+    cv.width = W; cv.height = H;
+    const g2 = cv.getContext('2d', { willReadFrequently: true }); g2.drawImage(capimg, 0, 0);
+    const px = g2.getImageData(0, 0, W, H).data, grey = new Uint8Array(W * H);
+    for (let i = 0, j = 0; j < grey.length; i += 4, j++) grey[j] = (px[i] * 299 + px[i + 1] * 587 + px[i + 2] * 114) / 1000;
+
+    const scan = await window.mbOverlay.scan();
+    page = { lines: scan.lines || [], fields: scan.fields || [], grey: grey, W: W, H: H, win: scan.win || null, app: String(scan.app || ''), images: scan.images || [], notes: scan.notes || [] };
+    const oneNote = /^onenote/i.test(page.app);
+    if (oneNote) $('#as-chip').classList.add('on');
+    /* OneNote: a clear spot on the page to type in (outside pictures and note boxes), level with the problem, right of the worksheet */
+    function oneNoteSpot(target) {
+      const lh = A.lineHeight || 20, right = r => r.x + r.w, bottom = r => r.y + r.h;
+      const busy = page.images.concat(page.notes);
+      const edge = Math.max(right(target), ...page.images.filter(im => im.y < bottom(target) && bottom(im) > target.y).map(right));
+      const winR = page.win ? page.win.x + page.win.w : W;
+      let x = Math.min(edge + 6 * lh, winR - 14 * lh), y = target.y;
+      const hit = (px, py) => busy.some(b => px > b.x - 2 * lh && px < right(b) + 2 * lh && py > b.y - 2 * lh && py < bottom(b) + 2 * lh);
+      for (let k = 0; k < 30 && hit(x, y); k++) y += 3 * lh;
+      return { x: x, y: y };
+    }
+    A = Assist.analyse(page);
+    draw();
+    /* keep the bar off the problems: to the bottom of the screen when it covers one */
+    {
+      const bar = $('#as-bar'), br = bar.getBoundingClientRect(), K = k();
+      const covers = A.problems.some(p => { const c = p.crop || p.r, x = c.x / K - ox, y = c.y / K - oy; return x < br.right && x + c.w / K > br.left && y < br.bottom + 14 && y + c.h / K > br.top; });
+      if (covers) bar.classList.add('low');
+      /* or wherever you drag it (by the logo) */
+      const grip = bar.querySelector('.logo'); let d = null;
+      grip.addEventListener('pointerdown', e => { const r = bar.getBoundingClientRect(); d = { dx: e.clientX - r.left, dy: e.clientY - r.top }; grip.setPointerCapture(e.pointerId); e.stopPropagation(); });
+      grip.addEventListener('pointermove', e => { if (!d) return; bar.classList.remove('low'); Object.assign(bar.style, { left: Math.min(Math.max(0, e.clientX - d.dx), innerWidth - 120) + 'px', top: Math.min(Math.max(0, e.clientY - d.dy), innerHeight - 60) + 'px', transform: 'none', bottom: 'auto' }); });
+      const up = () => { d = null; input.focus(); };
+      grip.addEventListener('pointerup', up); grip.addEventListener('pointercancel', up);
+    }
+    const small = (A.lineHeight && A.lineHeight / k() < 11 ? ' <span class="warn">The text is small: zooming in (Ctrl and +) makes reading more reliable.</span>' : '') +
+      (A.cutOff && A.cutOff.length ? ' <span class="warn">' + A.cutOff.map(n => '#' + n).join(', ') + (A.cutOff.length > 1 ? ' are' : ' is') + ' cut off at the bottom: scroll down to do ' + (A.cutOff.length > 1 ? 'them' : 'it') + '.</span>' : '');
+    const boxesSaid = A.boxes.length ? ' and <b>' + A.boxes.length + '</b> answer box' + (A.boxes.length === 1 ? '' : 'es') : oneNote ? '; answers go in new note boxes beside them' : '; no answer boxes, so answers are shown beside them (say <b>here</b> to type where you were)';
+    if (!A.problems.length) say('No numbered problems were found. Drag around a problem, type one (<b>solve 2x+3=7</b>), or say <b>here</b> to answer the box you were typing in.' + small);
+    else say('Found <b>' + A.problems.length + '</b> problem' + (A.problems.length > 1 ? 's' : '') + boxesSaid + '. Click a problem, or type what to do (<b>all</b>, <b>do 3</b>, <b>1-4</b>) and press <b>Enter</b>.' + small);
+    preview();
+
+    function draw() {
+      marks.querySelectorAll('.as-p, .as-b, .as-a').forEach(e => e.remove());
+      A.boxes.forEach((b, i) => {
+        const el = document.createElement('div'); el.className = 'as-b'; el.dataset.box = i; Object.assign(el.style, css(b.r));
+        el.title = 'Answer box' + (b.name ? ': ' + b.name : '');
+        el.addEventListener('click', e => { e.stopPropagation(); if (picked != null) { manual[picked] = b; preview(); } else { input.value = 'here'; manual = {}; preview(); } });
+        marks.appendChild(el);
+      });
+      A.problems.forEach(p => {
+        const el = document.createElement('div'); el.className = 'as-p' + ((p.crop || p.r).h / k() < 30 ? ' sm' : ''); el.dataset.n = p.n; Object.assign(el.style, css(p.crop || p.r));
+        el.innerHTML = '<span class="as-n">' + p.n + '</span>';
+        el.title = 'Problem ' + p.n + (p.guessed ? ' (number guessed)' : '');
+        el.addEventListener('click', e => {
+          e.stopPropagation();
+          const nums = (input.value.match(/\d+/g) || []).map(Number);
+          if (e.shiftKey || e.ctrlKey) { if (!nums.includes(p.n)) nums.push(p.n); input.value = 'do ' + nums.sort((a, b) => a - b).join(', '); }
+          else input.value = 'do ' + p.n;
+          picked = p.n; clearPick(); preview(); input.focus();
+        });
+        marks.appendChild(el);
+      });
+    }
+
+    /* drag around a problem: on a busy page (notes, a long document) that beats any guess.
+       The picked part is solved, and its answer goes in the nearest box, or where you were typing ("here") */
+    const sel = document.createElement('div'); sel.className = 'as-sel'; sel.hidden = true; marks.appendChild(sel);
+    function clearPick() { dragPick = null; marks.querySelectorAll('.as-p.pick').forEach(e => e.remove()); }
+    as.addEventListener('pointerdown', e => {
+      if (e.button !== 0 || e.target.closest('#as-bar, .as-p, .as-b')) return;
+      dragStart = { x: e.clientX + ox, y: e.clientY + oy }; sel.hidden = true;
+      try { as.setPointerCapture(e.pointerId); } catch (x) { /* ignore */ }
+    });
+    as.addEventListener('pointermove', e => {
+      if (!dragStart) return;
+      const x = e.clientX + ox, y = e.clientY + oy;
+      Object.assign(sel.style, { left: Math.min(x, dragStart.x) + 'px', top: Math.min(y, dragStart.y) + 'px', width: Math.abs(x - dragStart.x) + 'px', height: Math.abs(y - dragStart.y) + 'px' });
+      sel.hidden = false;
+    });
+    as.addEventListener('pointerup', e => {
+      if (!dragStart) return;
+      const x = e.clientX + ox, y = e.clientY + oy, K = k();
+      const cssR = { x: Math.min(x, dragStart.x), y: Math.min(y, dragStart.y), w: Math.abs(x - dragStart.x), h: Math.abs(y - dragStart.y) };
+      dragStart = null; sel.hidden = true;
+      if (cssR.w < 10 || cssR.h < 8 || !A) { input.focus(); return; }
+      clearPick();
+      const r = { x: cssR.x * K, y: cssR.y * K, w: cssR.w * K, h: cssR.h * K }, lh = A.lineHeight || 20;
+      dragPick = { n: '✓', manual: true, r: r, crop: r, crops: [r], x: r.x, y: r.y, zoneTop: r.y - lh, zoneBottom: r.y + r.h + 4 * lh, zoneLeft: r.x - lh, zoneRight: page.W, hint: {} };
+      const el = document.createElement('div'); el.className = 'as-p pick on'; el.dataset.n = '✓'; Object.assign(el.style, css(r));
+      el.innerHTML = '<span class="as-n">✓</span>'; marks.appendChild(el);
+      input.value = '';
+      preview();
+      say('Picked. Press <b>Enter</b> to solve it' + (A.boxes.length ? ' (its answer goes in the box shown)' : '') + ', or type where it goes, like <b>here</b> or <b>box below</b>.');
+      input.focus();
+    });
+
+    function currentPlan() {
+      const dirs = Assist.parseDirections(input.value);
+      /* a dragged pick, unless the directions name other problems */
+      if (dragPick && dirs.which !== 'nums' && dirs.which !== 'all' && !dirs.typed) {
+        const focusBox = A.boxes.find(b => b.focus) || null;
+        let box = null, here = false;
+        if (dirs.where === 'here') { box = focusBox; here = !focusBox; }
+        else { box = Assist.pickBox(dragPick, A.boxes, dirs, new Set(), info.cursor, A.problems) || focusBox; here = !box; }
+        return { dirs: dirs, pl: { tasks: [{ problem: dragPick, box: box, here: here && dirs.where === 'here', hint: Object.assign({}, dirs.hint) }], notes: [] } };
+      }
+      const pl = Assist.plan(page, A, dirs, info.cursor);
+      pl.tasks.forEach(t => { if (t.problem && manual[t.problem.n]) { t.box = manual[t.problem.n]; t.here = false; } });
+      return { dirs: dirs, pl: pl };
+    }
+    function preview() {
+      if (!A) return;
+      if (!busy) ready = null;   /* the picks changed: answers worked out before are for something else */
+      const { pl } = currentPlan();
+      marks.querySelectorAll('.as-p').forEach(e => e.classList.toggle('on', pl.tasks.some(t => t.problem && String(t.problem.n) === e.dataset.n)));
+      marks.querySelectorAll('.as-b').forEach(e => e.classList.toggle('on', pl.tasks.some(t => t.box && A.boxes[e.dataset.box] === t.box)));
+      svg.innerHTML = pl.tasks.filter(t => t.problem && t.box).map(t => {
+        const a = t.problem.crop || t.problem.r, b = t.box.r, K = k();
+        const x1 = (a.x + a.w) / K, y1 = (a.y + a.h / 2) / K, x2 = b.x / K, y2 = (b.y + b.h / 2) / K;
+        return '<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 + '" stroke="#0d7a53" stroke-width="2" stroke-dasharray="5 4" opacity="0.8"/>';
+      }).join('');
+      if (!busy && input.value.trim()) {
+        const what = pl.tasks.map(t => (t.problem ? '#' + t.problem.n : '<b>' + esc(t.text) + '</b>') + ' → ' + (t.box ? 'box' : t.here ? 'where you were typing' : '<span class="bad">no box</span>')).join(', ');
+        say((what || '') + (pl.notes.length ? ' <span class="bad">' + esc(pl.notes.join(' ')) + '</span>' : ''));
+      }
+    }
+    input.addEventListener('input', () => { picked = null; preview(); });
+
+    function crop(r) {
+      const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(r.w)); c.height = Math.max(1, Math.round(r.h));
+      c.getContext('2d').drawImage(capimg, r.x, r.y, r.w, r.h, 0, 0, c.width, c.height);
+      return c.toDataURL('image/png');
+    }
+    function bubble(t, text, bad) {
+      const el = document.createElement('div'); el.className = 'as-a' + (bad ? ' err' : ''); el.textContent = text;
+      const r = t.box ? t.box.r : t.problem ? (t.problem.crop || t.problem.r) : { x: W / 2, y: H / 3, w: 0, h: 0 };
+      const K = k();
+      Object.assign(el.style, t.box ? { left: (r.x + 6) / K + 'px', top: (r.y + r.h / 2) / K - 13 + 'px' } : { left: (r.x + r.w + 10) / K + 'px', top: (r.y + r.h / 2) / K - 13 + 'px' });
+      marks.appendChild(el);
+    }
+    async function run(placeIt) {
+      if (busy) return;
+      if (!A) { say('Still reading your screen…'); return; }
+      const { dirs, pl } = currentPlan();
+      if (!pl.tasks.length) { say('<span class="bad">' + esc(pl.notes.join(' ') || 'Say which problem to do.') + '</span>'); return; }
+      busy = true; $('#as-go').disabled = true; $('#as-chk').disabled = true;
+      marks.querySelectorAll('.as-a').forEach(e => e.remove());
+      const steps = [], fails = [], noBox = [];
+      for (let i = 0; i < pl.tasks.length; i++) {
+        const t = pl.tasks[i], label = t.problem ? (t.problem.manual ? 'the part you picked' : '#' + t.problem.n) : 'answer';
+        say('Solving ' + label + (pl.tasks.length > 1 ? ' (' + (i + 1) + ' of ' + pl.tasks.length + ')' : '') + '…');
+        /* how to read and answer this one (shared with the test bench, so both always agree) */
+        const opts = Assist.solveOptions(t, A, style(), oneNote);
+        if (opts.lineCrops) { opts.images = opts.lineCrops.map(crop); delete opts.lineCrops; }
+        let r;
+        try { r = await window.mbOverlay.solve({ image: t.problem ? crop(t.problem.crop) : null, opts: opts }); } catch (e) { r = { ok: false, error: 'Mathbench could not solve that.' }; }
+        if (!r || !r.ok) { fails.push(label + ': ' + ((r && r.error) || 'not solved')); bubble(t, (r && r.error) ? 'Not solved' : 'Not solved', true); continue; }
+        bubble(t, r.answer.split('\n').pop());
+        /* OneNote works out "2 + 2 =" by itself when a space follows "=": a no-break space keeps it from adding its own result */
+        if (oneNote) r.answer = r.answer.replace(/= /g, '= ');
+        if (t.box && t.box.kind === 'spot') {
+          /* a spot you wrote ("2 here"): double-click the word "here" to select it, so the answer replaces it */
+          const b = t.box.r;
+          steps.push(t.box.word ? { x: b.x + b.w / 2, y: b.y + b.h / 2, double: true, text: r.answer, label: label } : { x: b.x, y: b.y + b.h / 2, text: ' ' + r.answer, label: label });
+        } else if (t.box) {
+          const b = t.box.r, x = (b.x + Math.min(b.w / 2, 40)), y = t.box.kind === 'blank' ? b.y + b.h - 8 : b.y + b.h / 2;
+          /* never Ctrl+A in OneNote: there it can select the whole page */
+          steps.push({ x: x, y: y, text: r.answer, replace: !oneNote && !!(dirs.replace || (t.box.kind === 'field' && t.box.value)), label: label });
+        } else if (t.here) steps.push({ text: r.answer, label: label });
+        else if (oneNote && t.problem) {
+          /* OneNote mode: type in a clear spot, then drag the note box to just right of the problem */
+          const c = t.problem.crop || t.problem.r, spot = oneNoteSpot(c);
+          steps.push({ onenote: true, x: spot.x, y: spot.y, tx: c.x + c.w + 0.8 * (A.lineHeight || 20), ty: c.y + 0.2 * c.h, text: r.answer, label: label });
+        } else noBox.push(label);   /* nowhere to type it (a PDF or a printed sheet): the answer is shown on the page */
+      }
+      busy = false; $('#as-go').disabled = false; $('#as-chk').disabled = false;
+      if (!placeIt || !steps.length) {
+        const shown = noBox.length && !steps.length ? 'Answers shown next to each problem. There are no boxes to type them in here; to type one somewhere, click there first and say <b>here</b>.' : steps.length ? 'Answers shown. Press <b>Enter</b> to type them in.' : '';
+        say(shown + (fails.length ? ' <span class="bad">' + esc(fails.join('; ')) + '</span>' : ''));
+        if (!placeIt) { ready = steps; }
+        return;
+      }
+      if (fails.length) { say('<span class="bad">' + esc(fails.join('; ')) + '</span> Typing the rest…'); await new Promise(r => setTimeout(r, 1400)); }
+      else await new Promise(r => setTimeout(r, 450));   /* a moment to see the answers */
+      window.mbOverlay.place(steps);
+    }
+    const goNow = () => { if (ready && ready.length && input.value === readyFor) { window.mbOverlay.place(ready); return; } run(true); };
+    $('#as-go').addEventListener('click', goNow);
+    $('#as-chk').addEventListener('click', () => { readyFor = input.value; run(false); });
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && e.altKey) { e.preventDefault(); readyFor = input.value; run(false); }
+      else if (e.key === 'Enter') { e.preventDefault(); goNow(); }
+    });
+    as.addEventListener('contextmenu', e => { e.preventDefault(); window.mbOverlay.cancel(); });
+  }
+
+  /* ready: show the window, then open the solver so the overlay is never empty */
+  try { await capimg.decode(); } catch (e) { /* ignore */ }
+  window.mbOverlay.shown();
+  const last = store('mbo-open');
+  if (info.assist) { startAssist(); return; }
+  if (!info.pasteOnly) (last || ['solver']).forEach(id => { if (DEFS[id]) openWidget(id); });
+  window.addEventListener('beforeunload', () => { store('mbo-open', Object.keys(open)); Object.keys(open).forEach(savePos); });
+  if (info.autoCapture) startCapture();
+})();
+</script>
+</body>
+</html>
