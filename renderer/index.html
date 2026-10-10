@@ -1781,13 +1781,23 @@ function functionEquation(rows, mode, pieces) {
   return r;
 }
 /* ---------- calculus asked in words: limits and continuity ---------- */
-const CALC_ASK = /\blim(?:it)?\b|lim_|\bapproach|\btends?\s+to\b|discontinu|continuous|asymptote|\bholes?\b/i;
+const CALC_ASK = /\blim(?:it)?\b|lim_|\bapproach|\btends?\s+to\b|discontinu|continuous|asymptote|\bholes?\b|\bderivative\b|\bdifferentiat|\bd\s*\^?\s*\(?\d?\)?\s*y\s*\/\s*d\s*[a-z]\b|\b[a-z]\s*'{1,3}\s*\(/i;
+/* a derivative asked for: "derivative", "differentiate", dy/dx, f'(x) */
+const DERIV_ASK = /\bderivative\b|\bdifferentiat|\bd\s*\^?\s*\(?\d?\)?\s*y\s*\/\s*d\s*[a-z]\b|\b[a-z]\s*'{1,3}\s*\(/i;
 /* "f(x) = …" on one line and "lim x→2 f(x)" or "Find the discontinuities" on another: put the definitions in, then work it out */
 function functionCalc(ask, defs, mode, pieces, rows) {
   const names = Object.keys(defs);
   let q = ask, steps = [];
   const callRe = new RegExp('(^|[^A-Za-z])(' + names.join('|') + ')\\s*\\(');
-  if (callRe.test(q)) { const sub = substCalls(q, defs); if (!sub) return null; q = sub.s; steps = sub.steps; }
+  /* "Find f'(x)", "f''(2)", "dy/dx", "the derivative": of the function defined above */
+  const pr = new RegExp('(^|[^A-Za-z])(' + names.join('|') + ")\\s*('{1,3})\\s*\\(\\s*([^()]*)\\)").exec(q);
+  if (pr || (names.length === 1 && DERIV_ASK.test(q))) {
+    const d = defs[pr ? pr[2] : names[0]], ord = pr ? pr[3].length : /second/i.test(q) ? 2 : /third/i.test(q) ? 3 : 1;
+    const at = pr && pr[4].trim() !== d.v ? pr[4].trim() : null;
+    q = (ord === 2 ? 'second ' : ord === 3 ? 'third ' : '') + 'derivative of (' + d.body + ') with respect to ' + d.v + (at ? ", find f" + "'".repeat(ord) + '(' + at + ')' : '');
+    steps.push((pr ? pr[2] : names[0]) + '(' + d.v + ') = ' + d.body);
+  }
+  else if (callRe.test(q)) { const sub = substCalls(q, defs); if (!sub) return null; q = sub.s; steps = sub.steps; }
   else if (names.length === 1) {
     /* the question names no function ("Find the discontinuities", "lim x→2"): it is about the one defined */
     const d = defs[names[0]], word = new RegExp('(^|[^A-Za-z])' + names[0] + '(?![A-Za-z(])');
@@ -1802,10 +1812,11 @@ function functionCalc(ask, defs, mode, pieces, rows) {
   /* a limit of a piece-by-piece function: the answer line shows f(x), not its "if" form */
   if (names.length === 1) {
     const nm = names[0] + '(' + defs[names[0]].v + ')';
-    r.lines = (r.lines || []).map(l => !/\?/.test(l.text) ? l : {
+    const before = r.lines || [];
+    r.lines = before.map(l => !/\?/.test(l.text) ? l : {
       text: (/^lim\[[^\]]*\]/.exec(l.text) || [''])[0] + ' ' + nm + ' = ' + l.text.split(' = ').pop(),
       tex: (/^\\lim_\{[^}]*\}/.exec(l.tex) || [''])[0] + ' ' + nm + '=' + l.tex.split('=').pop() });
-    r.copyText = r.lines.map(l => l.text).join('\n'); r.copyTex = r.lines.map(l => l.tex).join(' \\\\\n');
+    if (r.lines.some((l, i) => l !== before[i])) { r.copyText = r.lines.map(l => l.text).join('\n'); r.copyTex = r.lines.map(l => l.tex).join(' \\\\\n'); }
   }
   r.notes = said.map(t => ({ text: t })).concat(r.notes || []);
   r.raw = rows.join('\n');
@@ -1824,6 +1835,27 @@ function calcWords(text) {
   const side = s => !s ? '' : /left|below/i.test(s) ? '-' : '+';
   const lim = (expr, v, a, sd) => ({ text: 'lim_(' + v + '->' + target(a) + side(sd) + ') ' + expr.trim().replace(/^(?:of\s+)/i, '') });
   let m;
+  /* a derivative in words: "find the derivative of x² eˣ", "differentiate y = 3x² + 5x", "find dy/dx if y = sin 2x",
+     "y = x³ − 4x, find dy/dx", "f(x) = x³ − 2x. Find f'(x)", "second derivative of …", "… with respect to t", "find f'(2)".
+     Already written as d/dx (…) is left alone */
+  if (DERIV_ASK.test(t) && !/^d\s*(?:\^\s*\(?\d\)?)?\s*\/\s*d\s*[a-z](?:\^\s*\(?\d\)?)?\s*\S/i.test(t)) {
+    let v = null, order = 1, body = null, at = null, k;
+    if ((k = /\bd\s*(?:\^\s*\(?(\d)\)?)?\s*y\s*\/\s*d\s*([a-z])/i.exec(t))) { v = k[2]; if (k[1]) order = +k[1]; }
+    if ((k = /\b([a-z])\s*('{1,3})\s*\(\s*([a-z]|-?[\d.]+)\s*\)/i.exec(t))) { order = k[2].length; if (/^[a-z]$/i.test(k[3])) v = v || k[3]; else at = k[3]; }
+    if (/\bsecond\s+derivative\b/i.test(t)) order = 2;
+    if (/\bthird\s+derivative\b/i.test(t)) order = 3;
+    if ((k = /with respect to ([a-z])\b/i.exec(t))) v = k[1];
+    /* the function ends where the question starts ("…, find dy/dx", "…. Find f'(x)") */
+    const cut = s => s.replace(/[,;.]?\s*(?:then\s+)?\b(?:find|what|and|with respect|evaluate|determine|at)\b[\s\S]*$/i, '').replace(/[,;.:\s]+$/, '').trim();
+    if ((k = /(?:^|[\s,;:.(])(?:y|([a-z])\s*\(\s*([a-z])\s*\))\s*=\s*([\s\S]+)$/i.exec(t))) { body = cut(k[3]); if (k[2]) v = v || k[2]; }
+    else if ((k = /(?:derivative|differentiate|d\s*y\s*\/\s*d\s*[a-z])\s*(?:of|for)?\s*([\s\S]+)$/i.exec(t))) body = cut(k[1]);
+    if (body && /[A-Za-z0-9]/.test(body)) {
+      if (!v) { try { v = N.extractVars(N.finalizeExpr(body))[0]; } catch (e) { v = null; } }
+      v = v || 'x';
+      const ord = order > 1 ? '^' + order : '';
+      return { text: 'd' + ord + '/d' + v + ord + ' (' + body + ')', mode: 'diff', at: at, v: v, order: order };
+    }
+  }
   if ((m = new RegExp(LEAD + 'limit (?:of )?(.+?),? as ([A-Za-z]) ' + toward + ' ?(.+?)(?: from (?:the )?(left|right|below|above))?$', 'i').exec(t))) return lim(m[1], m[2], m[3], m[4]);
   if ((m = new RegExp(LEAD + '(?:limit|lim) (?:as )?([A-Za-z]) ?' + toward + ' ?(\\S+?)(?: from (?:the )?(left|right|below|above))?(?: of|,)? (.+)$', 'i').exec(t))) return lim(m[4], m[1], m[2], m[3]);
   /* "as x → 2, f(x) → ?" */
@@ -1977,10 +2009,10 @@ function runCore(raw, mode) {
   let text = String(raw || '').trim();
   if (!text) throw uerr('Type or paste an equation first.', 'Try the examples below the symbol keys.');
   /* a limit or a continuity question in words */
+  let cw = null;
   if (!/^(?:stats|ntheory|plot|numeric)$/.test(mode || '')) {
-    let cw = null;
     try { cw = calcWords(N.prepare(text).replace(/\s*->\s*/g, ' -> ')); } catch (e) { cw = null; }
-    if (cw && cw.text) { text = cw.text; if (mode === 'auto' || !mode) mode = 'limit'; }
+    if (cw && cw.text) { text = cw.text; if (mode === 'auto' || mode === 'solve' || !mode) mode = cw.mode || 'limit'; }
     else if (cw && cw.discont) {
       const p = N.parse(cw.discont.expr, normOpts());
       return withMeta(hDiscont({ raw: text, p: p, ui: readOpts(), mode: 'discont', disc: cw.discont }), 'discont', p, text);
@@ -1991,11 +2023,40 @@ function runCore(raw, mode) {
   if (looksUnits(text)) return withMeta(hUnits(text), 'numeric', null, text);
   const p = N.parse(text, normOpts());
   if (p.empty) throw uerr('Type or paste an equation first.');
+  /* "y = x³ − 4x" or "f(x) = …" on its own: a function to work with, not an equation to solve for x in terms of y */
+  if ((mode === 'auto' || !mode) && !p.hint) {
+    const fx = fnFormula(p);
+    if (fx) {
+      const q = N.parse(fx, normOpts());
+      const r = HANDLERS.simplify({ raw: fx, p: q, ui: readOpts(), mode: 'simplify' });
+      const name = /^y$/.test(String(p.statements[0].lhs).trim()) ? 'y' : String(p.statements[0].lhs).replace(/[\s*]/g, '');
+      r.lines = (r.lines || []).map(l => ({ tex: name + '=' + l.tex, text: name + ' = ' + l.text }));
+      r.copyTex = null; r.copyText = null;
+      r.notes = [{ text: 'This is a function of ' + q.vars[0] + '. Choose what to do with it under Other ways: its derivative, integral, limits, discontinuities, graph and more.' }].concat(r.notes || []);
+      r.graph = { exprs: [fx], v: q.vars[0] };
+      const out = withMeta(r, 'simplify', q, text);
+      out.modeLabel = 'Function';
+      return out;
+    }
+  }
   const m = decideMode(p, mode, text);
   const ctx = { raw: text, p: p, ui: readOpts(), mode: m };
   const fn = HANDLERS[m];
   if (!fn) throw uerr('That mode is not available.');
   const r = fn(ctx);
+  /* "find f'(2)": the derivative, then its value there */
+  if (cw && cw.at != null && m === 'diff' && r.lines && r.lines.length) {
+    try {
+      const d = String(r.lines[r.lines.length - 1].text).split(' = ').pop();
+      const val = math.evaluate(d.replace(/(\d|\))\s*\(/g, '$1*('), { [cw.v]: math.evaluate(cw.at) });
+      if (typeof val === 'number' && isFinite(val)) {
+        const name = "f" + "'".repeat(cw.order) + '(' + cw.at + ')';
+        r.lines.push(line(name.replace(/'/g, '\\prime ') + '=' + niceTex(val, 1e-9), name + ' = ' + niceText(val, 1e-9)));
+        r.copyText = name + ' = ' + niceText(val, 1e-9);
+        r.notes = (r.notes || []).concat([{ text: 'Put ' + cw.v + ' = ' + cw.at + ' into the derivative.' }]);
+      }
+    } catch (e) { /* the derivative alone */ }
+  }
   return withMeta(r, m, p, text);
 }
 function withMeta(r, m, p, raw) {
@@ -2674,24 +2735,49 @@ function wayParse(raw) {
   if (cw && cw.discont) return N.parse(cw.discont.expr, normOpts());
   return N.parse(raw, normOpts());
 }
+/* "y = x³ − 4x" or "f(x) = x³ − 4x": a function given by its formula. The formula, when its only letter is the variable */
+function fnFormula(p) {
+  if (!p || p.type !== 'equation' || !p.statements[0]) return null;
+  const s0 = p.statements[0], lhs = String(s0.lhs).replace(/[\s*()]/g, '');
+  const m = /^(?:y|([a-z])([a-z]))$/.exec(lhs);
+  if (!m) return null;
+  const v = m[2] || 'x', vars = N.extractVars(s0.rhs);
+  return vars.length && vars.every(x => x === v) ? s0.rhs : null;
+}
 /* [{ id, label, ask }]: ask is 'point' (a limit: where x goes) or 'range' (a definite integral: from and to) */
+/* the problem on a card for its other ways: { p, fx } where fx is the function's formula when there is one
+   ("y = …", "f(x) = …", or a function defined on its own line above a question about it) */
+function wayTarget(raw) {
+  const rows = String(raw || '').split('\n').map(t => t.trim()).filter(Boolean);
+  if (rows.length > 1) {
+    let p = null; try { p = N.parse(rows.join('\n'), normOpts()); } catch (e) { p = null; }
+    if (p && p.type === 'system') return { p: p, fx: null };
+    const pw = piecewiseRows(rows);
+    if (pw.fns) return null;   /* a piece-by-piece function keeps to its own answer */
+    const names = Object.keys(splitDefs(pw.rows).defs);
+    if (names.length !== 1) return null;
+    const body = splitDefs(pw.rows).defs[names[0]].body;
+    const q = N.parse(body, normOpts());
+    return { p: q, fx: q.plain };
+  }
+  const p = wayParse(raw);
+  return { p: p, fx: fnFormula(p) };
+}
 function waysFor(card) {
   const r = card.res;
   if (!r || r.err || !card.raw) return [];
-  if (/\n/.test(String(card.raw).trim())) {   /* several lines: a system can be graphed or solved; function problems keep to their own answer */
-    let p; try { p = wayParse(card.raw); } catch (e) { return []; }
-    return p.type === 'system' ? [{ id: 'solve', label: 'Solve' }, ...(p.vars.length === 2 ? [{ id: 'plot', label: 'Graph' }] : [])].filter(w => w.id !== r.mode) : [];
-  }
-  let p; try { p = wayParse(card.raw); } catch (e) { return []; }
-  if (p.empty) return [];
+  let t; try { t = wayTarget(card.raw); } catch (e) { return []; }
+  if (!t || t.p.empty) return [];
+  const p = t.p, fx = t.fx;
+  if (p.type === 'system') return [{ id: 'solve', label: 'Solve' }, ...(p.vars.length === 2 ? [{ id: 'plot', label: 'Graph' }] : [])].filter(w => w.id !== r.mode);
   const out = [];
-  if (p.type === 'equation' || p.type === 'inequality') {
+  if (!fx && (p.type === 'equation' || p.type === 'inequality')) {
     out.push(p.type === 'equation' ? { id: 'solve', label: 'Solve' } : { id: 'inequality', label: 'Solve the inequality' });
     if (p.vars.length === 1) out.push({ id: 'plot', label: 'Graph both sides' });
     return out.filter(w => w.id !== r.mode);
   }
   if (p.type === 'system') return [{ id: 'solve', label: 'Solve' }].filter(w => w.id !== r.mode);
-  const expr = p.type === 'calculus' ? (p.struct && p.struct.expr) : p.plain;
+  const expr = fx || (p.type === 'calculus' ? (p.struct && p.struct.expr) : p.plain);
   if (!expr) return [];
   const vars = N.extractVars(expr);
   if (!vars.length) {
@@ -2718,11 +2804,13 @@ function waysHTML(card) {
 }
 /* do the problem the chosen way, as a new card on top */
 function runWay(card, id, a, b) {
-  let p; try { p = wayParse(card.raw); } catch (e) { return; }
-  const expr = p.type === 'calculus' ? p.struct.expr : p.plain;
+  let t; try { t = wayTarget(card.raw); } catch (e) { return; }
+  if (!t) return;
+  const p = t.p, fx = t.fx;
+  const expr = fx || (p.type === 'calculus' ? p.struct.expr : p.plain);
   const v = (p.type === 'calculus' && p.struct.variable) || N.extractVars(expr)[0] || 'x';
   const wrap = '(' + expr + ')';
-  if (p.type === 'equation' || p.type === 'inequality' || p.type === 'system') {
+  if (!fx && p.type === 'equation' || p.type === 'inequality' || p.type === 'system') {
     if (id === 'plot') { const s0 = p.statements[0]; const raw = 'plot ' + s0.lhs + ', ' + s0.rhs; addCard(raw, 'plot'); return; }
     addCard(card.raw, id); return;
   }
@@ -4541,7 +4629,7 @@ $('#cards').addEventListener('click', e => {
     const ask = b.dataset.ask, box = el.querySelector('.way-ask');
     if (!ask) { runWay(card, b.dataset.way); return; }
     /* a limit needs where x goes; a definite integral needs its bounds */
-    const v = (() => { try { const p = wayParse(card.raw); return N.extractVars(p.type === 'calculus' ? p.struct.expr : p.plain)[0] || 'x'; } catch (x) { return 'x'; } })();
+    const v = (() => { try { const t = wayTarget(card.raw); return N.extractVars(t.fx || (t.p.type === 'calculus' ? t.p.struct.expr : t.p.plain))[0] || 'x'; } catch (x) { return 'x'; } })();
     box.innerHTML = ask === 'point'
       ? '<label>' + esc(v) + ' → <input class="way-a" size="6" value="0" aria-label="Value the variable approaches (∞, 2+ or 2- for one side)"></label> <button type="button" class="btn small primary" data-act="way-go" data-way="' + b.dataset.way + '">Find limit</button>'
       : '<label>from <input class="way-a" size="5" value="0" aria-label="Lower bound"></label> <label>to <input class="way-b" size="5" value="1" aria-label="Upper bound"></label> <button type="button" class="btn small primary" data-act="way-go" data-way="' + b.dataset.way + '">Integrate</button>';
