@@ -11,5 +11,6 @@ contextBridge.exposeInMainWorld('mbOverlay', {
   scan: () => ipcRenderer.invoke('assist:scan'),
   solve: task => ipcRenderer.invoke('assist:solve', task),
   place: steps => ipcRenderer.send('assist:place', steps),
+  aiStatus: () => ipcRenderer.invoke('ai:status'),
   openSettings: () => { ipcRenderer.send('overlay:cancel'); ipcRenderer.send('settings:open'); }
 });

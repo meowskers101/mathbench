@@ -2816,6 +2816,11 @@ document.addEventListener('click', e => {
 async function solveForPaste(dataUrl, opts) {
   opts = opts || {};
   let tex = null;
+  /* a word problem on the page: Mathbench AI writes its equation from the words the text reader saw */
+  if (!opts.text && opts.wordProblem) {
+    try { const w = await MathAI.read(opts.wordProblem); opts = Object.assign({}, opts, { text: w.expr }); }
+    catch (e) { return { ok: false, error: 'Mathbench AI could not turn that word problem into an equation. Type the equation in the directions box instead (solve …).' }; }
+  }
   if (opts.text) tex = String(opts.text);
   else {
     /* a picture as a canvas; small text (a printout pasted into notes) enlarged so the reader sees clear strokes */
@@ -4362,9 +4367,56 @@ $('#examples').addEventListener('click', e => {
 });
 
 /* ---------- go ---------- */
+/* a word problem: Mathbench AI writes the equation, the solver does the rest. A card at the top says what is happening
+   (asking first before the one-time download) and is replaced by the answer */
+async function wordProblem(raw) {
+  const status = await MathAI.status();
+  if (!status.available) { addCard(raw, 'auto'); return; }
+  const el = document.createElement('article');
+  el.className = 'card';
+  const box = $('#cards'), empty = $('#empty');
+  if (empty) empty.hidden = true;
+  box.insertBefore(el, box.firstChild);
+  const show = h => { el.innerHTML = '<div class="card-b"><p class="card-mode">Word problem</p><p>' + h + '</p></div>'; };
+  const mb = n => (n / 1048576).toFixed(0) + ' MB';
+  try {
+    if (!status.ready) {
+      const go = await new Promise(res => {
+        show(esc(raw) + '<br><br><b>Mathbench AI</b> can read word problems and write the equation for you. It needs a one-time download of about ' +
+          (status.total / 1073741824).toFixed(1) + ' GB' + (status.have ? ' (' + mb(status.have) + ' already done)' : '') + ', then it works offline. ' +
+          '<br><br><button type="button" class="btn small primary" data-ai="yes">Download Mathbench AI</button> <button type="button" class="btn small" data-ai="no">Not now</button>');
+        el.addEventListener('click', e => { const b = e.target.closest('[data-ai]'); if (b) res(b.dataset.ai === 'yes'); });
+      });
+      if (!go) { el.remove(); addCard(raw, 'auto'); return; }
+      if (!wordProblem.listening) { wordProblem.listening = true; window.mbDesktop.onAiProgress(p => { if (wordProblem.onProgress) wordProblem.onProgress(p); }); }
+      wordProblem.onProgress = (p => { if (el.isConnected) show('Downloading Mathbench AI… ' + Math.floor(100 * p.have / p.total) + '% (' + mb(p.have) + ' of ' + mb(p.total) + ') <button type="button" class="btn small" data-ai="stop">Cancel</button>'); });
+      el.addEventListener('click', e => { if (e.target.closest('[data-ai="stop"]')) window.mbDesktop.aiCancel(); });
+      const d = await window.mbDesktop.aiDownload();
+      if (!d.ready) throw uerr(d.error === 'cancelled' ? 'Download cancelled. Press Solve again to carry on where it stopped.' : 'The download did not finish: ' + (d.error || 'unknown error') + '. Press Solve to try again; it carries on where it stopped.');
+    }
+    show('Mathbench AI is reading the problem…');
+    const t0 = performance.now();
+    const r = await MathAI.read(raw, () => show('Starting Mathbench AI (first time after opening takes a few seconds)…'));
+    const secs = ((performance.now() - t0) / 1000).toFixed(1);
+    el.remove();
+    addCard(r.expr, 'auto', () => {
+      const res = run(r.expr, 'auto');
+      res.notes = [{ text: 'Word problem: ' + raw.replace(/\s+/g, ' ').trim() }, { text: 'Mathbench AI wrote it as ' + r.expr + (r.meaning.length ? ', where ' + r.meaning.map(m => m.replace(/\s*:\s*/, ' is ')).join(' and ') : '') + '. Check that this matches the problem.' }]
+        .concat(res.notes || []);
+      res.modeLabel = 'Word problem';
+      res.warns = (res.warns || []).concat(MathAI.device() === 'cpu' ? ['Mathbench AI ran on the processor (no graphics card it could use), so it took ' + secs + ' s.'] : []);
+      return res;
+    });
+  } catch (e) {
+    el.remove();
+    const card = addCard(raw, 'auto', () => { throw e; });
+    return card;
+  }
+}
 function go() {
   const raw = boxText();
   if (!raw.trim()) { expr.focus(); $('#understood').innerHTML = '<span class="err-inline">Type or paste an equation first.</span>'; return; }
+  if ((st.mode === 'auto' || st.mode === 'solve') && looksLikeWordProblem(raw)) { wordProblem(raw); return; }
   addCard(raw, st.mode);
   const first = $('#cards .card');
   if (first && window.matchMedia('(max-width: 979px)').matches) first.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -5382,6 +5434,101 @@ self.onmessage = async (e) => {
   return { read: read, prefetch: () => { load().catch(() => { /* the reader falls back later */ }); }, loaded: () => pct === 100, progress: () => pct, sizeMB: Math.round(TOTAL / 1048576) };
 })();
 
+/* ---------- Mathbench AI: reads a word problem and writes the equation behind it ----------
+   Qwen2.5 1.5B Instruct (Apache 2.0), run with Transformers.js (Apache 2.0) in a worker, on the graphics card when it can.
+   The weights are downloaded once on request (about 1.8 GB) into the user profile; then it works offline like the rest of Mathbench. */
+const MathAI = (function () {
+  const D = () => window.mbDesktop;
+  const MODELS = D() ? 'mathbench://app/models/' : '/_models/';   /* the second only for testing the page on its own */
+  const SYS = 'You turn a maths word problem into input for a calculator.\n' +
+    'Reply with exactly two lines and nothing else:\n' +
+    'line 1: the equation to solve (use x for the unknown asked for; for two unknowns use x and y and separate the equations with ;), or a plain calculation if nothing is unknown\n' +
+    'line 2: what x stands for, in a few words\n' +
+    'Use * for times, / for divide, ^ for powers and sqrt() for roots. Write percentages as decimals. Do not solve it.';
+  const SHOTS = [
+    ['A number tripled and decreased by 4 is 17. What is the number?', '3*x-4=17\nx: the number'],
+    ['Pens cost $2 and notebooks cost $3. Lena bought 9 items for $22. How many notebooks did she buy?', 'x+y=9; 3*x+2*y=22\nx: the number of notebooks'],
+    ['What is 15% of 60?', '0.15*60\nx: none'],
+    ['A square has an area of 49 square inches. How long is each side?', 'x^2=49\nx: the side length in inches'],
+    ['A train covers 150 km in 2.5 hours. What is its speed in km per hour?', '150/2.5\nx: none'],
+    ['Ana is 5 years younger than three times her cousin\'s age. Ana is 22. How old is her cousin?', '3*x-5=22\nx: the cousin\'s age']
+  ];
+  let worker = null, ready = null, seq = 0, device = null;
+  const pending = new Map();
+  function call(msg, onProgress) {
+    return new Promise((resolve, reject) => {
+      const id = ++seq;
+      pending.set(id, { resolve: resolve, reject: reject, onProgress: onProgress });
+      worker.postMessage(Object.assign({ id: id }, msg));
+    });
+  }
+  function load(onProgress) {
+    if (ready) return ready;
+    ready = (async () => {
+      worker = new Worker(new URL('mathai-worker.js', document.baseURI), { type: 'module' });
+      worker.onmessage = e => {
+        const p = pending.get(e.data.id); if (!p) return;
+        if (e.data.progress) { if (p.onProgress) try { p.onProgress(e.data.progress); } catch (x) { /* ignore */ } return; }
+        pending.delete(e.data.id);
+        if (e.data.ok) p.resolve(e.data); else p.reject(new Error(e.data.error));
+      };
+      worker.onerror = e => { pending.forEach(p => p.reject(new Error((e && e.message) || 'worker failed'))); pending.clear(); };
+      const r = await call({ type: 'load', lib: new URL('tjs/transformers.min.js', document.baseURI).href, wasm: new URL('tjs/', document.baseURI).href, models: MODELS, name: 'qwen' }, onProgress);
+      device = r.device;
+      return r;
+    })();
+    ready.catch(() => { ready = null; try { if (worker) worker.terminate(); } catch (e) { /* ignore */ } worker = null; });
+    return ready;
+  }
+  /* is what the model wrote something the calculator can finish? null when it is, otherwise what to tell it */
+  function check(line) {
+    if (!line) return 'Write the equation on the first line.';
+    if (/[A-Za-z]{3,}/.test(line.replace(/\b(?:sqrt|sin|cos|tan|log|ln|exp|abs|pi)\b/g, ''))) return 'Line 1 must use only numbers and single letters such as x, no words.';
+    let p;
+    try { p = N.parse(line, normOpts()); } catch (e) { return 'The calculator could not read line 1.'; }
+    const eqs = p.statements.filter(s => s.rel).length, vars = p.vars.filter(v => !/^(?:e|i|pi)$/.test(v));
+    if (eqs && vars.length > eqs) return 'Line 1 has ' + vars.length + ' unknowns (' + vars.join(', ') + ') but only ' + eqs + ' equation' + (eqs > 1 ? 's' : '') + '. Use the facts in the problem to write it with x only, or add the missing equation.';
+    if (!eqs && vars.length) return 'Line 1 has an unknown but no equals sign. Write an equation.';
+    try { run.inner = true; runCore(line, 'auto'); } catch (e) { return 'The calculator could not solve line 1 (' + (e.message || 'error') + '). Write it differently.'; } finally { run.inner = false; }
+    return null;
+  }
+  /* the word problem -> { expr, meaning: ["x: the width in cm"], tries } */
+  async function read(text, onProgress) {
+    await load(onProgress);
+    const msgs = [{ role: 'system', content: SYS }];
+    SHOTS.forEach(s => { msgs.push({ role: 'user', content: s[0] }); msgs.push({ role: 'assistant', content: s[1] }); });
+    msgs.push({ role: 'user', content: String(text).replace(/\s+/g, ' ').trim() });
+    let last = '';
+    read.log = [];
+    for (let k = 0; k < 3; k++) {
+      const a = (await call({ type: 'chat', messages: msgs, max: 64 })).text;
+      read.log.push(a);
+      const lines = a.replace(/```\w*/g, '').split('\n').map(l => l.trim()).filter(Boolean);
+      /* the equations: line 1, and any more it put on lines of their own instead of after a ";" (up to the "x: …" lines) */
+      const clean = l => l.replace(/^(?:line\s*\d|equations?|answer)\s*:\s*/i, '').replace(/[.。]$/, '').trim();
+      const eqLines = [];
+      for (const l of lines) { if (/^[A-Za-z]\s*:/.test(l) || (eqLines.length && !/=/.test(l))) break; eqLines.push(clean(l)); }
+      const line = eqLines.join('; ');
+      const why = check(line);
+      if (!why) return { expr: line, meaning: lines.filter(l => /^[A-Za-z]\s*:/.test(l) && !/:\s*none\s*$/i.test(l)), tries: k + 1 };
+      last = line;
+      msgs.push({ role: 'assistant', content: a }, { role: 'user', content: why + ' Reply again with the two lines only.' });
+    }
+    throw uerr('Mathbench AI could not turn this into an equation it can solve' + (last ? ' (it wrote ' + last + ')' : '') + '.', 'Try writing the equation yourself, or reword the problem.');
+  }
+  return { read: read, log: () => read.log, load: load, device: () => device, status: async () => (D() && D().aiStatus ? Object.assign({ available: true }, await D().aiStatus()) : { available: /[?&]bench=1\b/.test(location.search), ready: true }) };
+})();
+
+/* a word problem rather than maths: several ordinary words that none of the other readers understand */
+function looksLikeWordProblem(text) {
+  const t = String(text || '');
+  if (!/[A-Za-z]{3,}(?:\s+[A-Za-z']+){3,}/.test(t)) return false;
+  try { if (calcWords(N.prepare(t).replace(/\s*->\s*/g, ' -> '))) return false; } catch (e) { /* not a calculus question */ }
+  if (looksUnits(t)) return false;
+  const KNOWN = /^(?:sin|cos|tan|cot|sec|csc|log|sqrt|exp|abs|solve|simplify|expand|factor|factorise|factorize|find|evaluate|calculate|compute|plot|graph|integrate|differentiate|derivative|integral|sum|product|mean|median|mode|gcd|lcm|mod|det|the|and|for|with|from|roots|infinity|otherwise|where|when)$/i;
+  return (t.match(/[A-Za-z']{3,}/g) || []).filter(w => !KNOWN.test(w)).length >= 4;
+}
+
 /* LaTeX from the formula reader -> what a person would type: ÷ × x² √ π, fractions as a/b.
    Used only when the solver reads the result exactly as it reads the LaTeX. */
 function texToPlain(tex) {
@@ -5700,6 +5847,8 @@ if (/[?&]bench=1\b/.test(location.search)) {
   window.__mbRun = (t, m) => run(t, m || 'auto');
   window.__mbReadCanvas = async (c, opts) => { const r = await FormulaAI.read(c, Object.assign({ photo: false }, opts || {})); return r && r.tex; };
   window.__mbTidy = tidyModelTex;
+  window.__mbAI = MathAI;
+  window.__mbWords = looksLikeWordProblem;
   window.__mbFill = t => { fillBox(t, '', null); return document.querySelector('#expr').value; };
   window.__mbReadPic = async url => { const im = new Image(); im.src = url; await im.decode(); const c = document.createElement('canvas'); c.width = im.naturalWidth; c.height = im.naturalHeight; c.getContext('2d').drawImage(im, 0, 0); const r = await FormulaAI.read(c, {}); return r ? r.tex : null; };
   window.__mbReadAt = async (url, k) => { const im = new Image(); im.src = url; await im.decode(); const c = document.createElement('canvas'); c.width = im.naturalWidth * k; c.height = im.naturalHeight * k; const g = c.getContext('2d'); g.imageSmoothingQuality = 'high'; g.drawImage(im, 0, 0, c.width, c.height); const r = await FormulaAI.read(c, { photo: false }); return r ? r.tex + ' ' + (r.meanP || 0).toFixed(2) : null; };

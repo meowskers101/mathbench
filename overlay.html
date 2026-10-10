@@ -392,6 +392,8 @@
 
     const scan = await window.mbOverlay.scan();
     page = { lines: scan.lines || [], fields: scan.fields || [], grey: grey, W: W, H: H, win: scan.win || null, app: String(scan.app || ''), images: scan.images || [], notes: scan.notes || [] };
+    /* Mathbench AI installed: numbered word problems count as problems too */
+    try { const ai = window.mbOverlay.aiStatus && await window.mbOverlay.aiStatus(); page.ai = !!(ai && ai.ready); } catch (e) { page.ai = false; }
     const oneNote = /^onenote/i.test(page.app);
     if (oneNote) $('#as-chip').classList.add('on');
     /* OneNote: a clear spot on the page to type in (outside pictures and note boxes), level with the problem, right of the worksheet */

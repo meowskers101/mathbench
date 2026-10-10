@@ -14,9 +14,16 @@ Fine-tuning data:
   No fonts are shipped with Mathbench.
 No data under a non-commercial licence (such as Google's MathWriting) was used to train this model.
 
+Mathbench AI (the word-problem reader, downloaded on request)
+-------------------------------------------------------------
+- Qwen2.5-1.5B-Instruct (Alibaba Cloud, Qwen team) - Apache License 2.0. Mathbench uses the 4-bit ONNX export from
+  onnx-community/Qwen2.5-1.5B-Instruct, re-saved with its weights split into pieces so a browser engine can load it.
+  The model licence is also downloaded with the model.
+
 Libraries
 ---------
 - ONNX Runtime Web (Microsoft) - MIT
+- Transformers.js (Hugging Face) - Apache License 2.0
 - KaTeX - MIT
 - nerdamer - MIT
 - math.js - Apache License 2.0
@@ -49,7 +56,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------
-Apache License 2.0 (WindyVerse Handwritten-Latex-Datasets, math.js, Tesseract.js)
+Apache License 2.0 (WindyVerse Handwritten-Latex-Datasets, math.js, Tesseract.js, Transformers.js, Qwen2.5-1.5B-Instruct)
 ------------------------------------------------------------------------
 
                                  Apache License

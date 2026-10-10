@@ -60,6 +60,12 @@ function isProse(text) {
   const words = t.split(/\s+/).filter(w => /^[A-Za-z']{3,}[.,:;!?)]*$/.test(w) && !FUNCS.test(w.replace(/[^A-Za-z]/g, '')) && !VERBS.test(w.replace(/[^A-Za-z]/g, '')));
   return words.length >= 2;
 }
+/* a word problem: a sentence or two with numbers in it that asks for something ("How many tickets…?", "Find the width.") */
+function isWordProblem(text) {
+  const t = String(text || '');
+  return /\d/.test(t) && (t.match(/[A-Za-z']{3,}/g) || []).length >= 6 &&
+    (/\?/.test(t) || /\b(how\s+(many|much|long|far|old|fast|tall)|what\s+(is|was|are|were)|find|calculate|determine|work\s+out)\b/i.test(t));
+}
 const isWordy = t => /^[A-Za-z]{2,}[:,.]?$/.test(t) && !FUNCS.test(t.replace(/[:,.]$/, ''));
 const isVarColon = t => /^[a-z]:$/i.test(t);
 
@@ -243,7 +249,8 @@ function analyse(page) {
   /* problems: lines that start with a number marker; a problem runs down its own column until the next number there */
   let marks = [];
   /* a numbered line of ordinary words ("1. Read chapter 3 before Friday") is a to-do list in notes, not a problem */
-  lines.forEach((l, i) => { const m = markerOf(l.words); if (m && !isProse(l.t)) marks.push({ line: i, n: m.n, words: m.words, x: l.words[0].r.x, y: l.r.y }); });
+  /* with Mathbench AI installed, a numbered item of words can be a word problem (kept below only if it reads like one) */
+  lines.forEach((l, i) => { const m = markerOf(l.words); if (m && (!isProse(l.t) || page.ai)) marks.push({ line: i, n: m.n, words: m.words, x: l.words[0].r.x, y: l.r.y }); });
   /* columns of numbers (worksheets often have two): numbers whose left edges line up */
   const columnsOf = ms => {
     const cols = [];
@@ -494,7 +501,16 @@ function analyse(page) {
     if (cs.length >= 2) { const L = cs[cs.length - 1], P = cs[cs.length - 2]; L.x1 = Math.min(L.x1, L.x + (L.x - P.x)); } }
   settle(problems);
   /* numbered items with no maths (a list in notes: "1. Read chapter 3") are not problems */
-  for (let i = problems.length - 1; i >= 0; i--) if (problems[i].hasMath === false) problems.splice(i, 1);
+  for (let i = problems.length - 1; i >= 0; i--) {
+    const p = problems[i];
+    if (p.hasMath !== false) continue;
+    /* a word problem for Mathbench AI: words with numbers in them that ask for something */
+    /* its words run down to the next number in its column (evenly spaced lines can put the question past its zone) */
+    const next = problems.filter(q => q !== p && q.col === p.col && q.y > p.y + 0.5 * lh).sort((q, r) => q.y - r.y)[0];
+    const text = p.line ? lines.filter(l => l.r.y >= p.line.r.y - 0.3 * lh && (!next || l.r.y < next.y - 0.3 * lh) && l.r.x >= p.zoneLeft - 2 && l.r.x < p.zoneRight)
+      .sort((q, r) => q.r.y - r.r.y).filter((l, k, arr) => !arr.slice(1, k + 1).some(q => markerOf(q.words)) && (!k || l.r.y - bottom(arr[k - 1].r) < 2 * lh)).map(l => l.t) : [];
+    if (page.ai && isWordProblem(text.join(' '))) { p.wordy = true; p.ocrLines = text; } else problems.splice(i, 1);
+  }
   /* no numbered problems: each line with maths is a problem, numbered from the top (notes, a page of equations) */
   if (!problems.length) {
     const found = lines.filter(l => isMathLine(l.t)).map(l => ({ line: l, r: l.r }));
@@ -510,6 +526,9 @@ function analyse(page) {
         found.push({ line: null, r: br });
       });
     }
+    /* handwriting: the text reader reads none of it, so the page seems to hold no maths at all. Rows of ink where it read
+       nothing, taller than the page's text and wider than tall, are problems for the formula reader (Formula AI reads handwriting) */
+    if (page.grey && !found.length) inkProblems(page, lines, bg, lh, win, inBox).forEach(r => found.push({ line: null, r: r }));
     /* functions defined on their own lines, then the question ("f(x) = 2x + 1", "g(x) = x²", "Find (f∘g)(3)"): one problem.
        The text reader garbles names ("fix) ="), so a definition is any short name, a letter in brackets, then "=" */
     const isDef = t => /^\s*[A-Za-z]{1,2}\s*[(\[{|]?\s*[A-Za-z]\s*[)\]}|1l]?\s*=/.test(t);
@@ -564,7 +583,8 @@ function analyse(page) {
     p.zoneLeft = p.col ? p.col.x0 : p.unnumbered ? p.r.x - 6 * lh : 0;   /* the text reader often drops the start of a maths line ("5(") */
     p.zoneRight = p.col ? p.col.x1 : p.unnumbered ? right(p.r) + 4 * lh : (page.W || 1e5);
     p.zoneTop = p.y - (p.unnumbered ? 0.4 : 1.5) * lh;
-    p.zoneBottom = p.group ? bottom(p.r) + 0.6 * lh : p.y + (p.unnumbered ? 1.2 : 10) * lh;
+    /* a line of handwriting can be two or three text lines tall: its zone reaches its own bottom */
+    p.zoneBottom = p.group ? bottom(p.r) + 0.6 * lh : p.unnumbered ? Math.max(p.y + 1.2 * lh, bottom(p.r) + 0.2 * lh) : p.y + 10 * lh;
   });
   problems.forEach(p => {
     const next = problems.filter(q => q !== p && q.col === p.col && q.y > p.y + 0.5 * lh).sort((a, b) => a.y - b.y)[0];
@@ -585,6 +605,38 @@ function analyse(page) {
 }
 
 function median(a) { const s = a.slice().sort((x, y) => x - y); return s.length ? s[s.length >> 1] : 0; }
+
+/* lines of handwriting on the page, found from the ink alone: [rect] */
+function inkProblems(page, lines, bg, lh, win, inBox) {
+  const g = page.grey, W = page.W, H = page.H;
+  const X0 = win ? Math.max(0, win.x | 0) : 0, X1 = win ? Math.min(W, right(win) | 0) : W;
+  const Y0 = win ? Math.max(0, win.y | 0) : 0, Y1 = win ? Math.min(H, bottom(win) | 0) : H;
+  const on = (x, y) => Math.abs(g[y * W + x] - bg) > 70;
+  /* each row of ink split into pieces at wide blank gaps (columns, or a note beside the maths) */
+  const pieces = [];
+  inkBands(g, W, H, X0, X1, Y0, Y1, bg).forEach(b => {
+    let s = -1, e = -1, blank = 0;
+    for (let x = b.x0; x <= b.x1; x++) {
+      let ink = false;
+      if (x < b.x1) for (let y = b.y0; y < b.y1; y++) if (on(x, y)) { ink = true; break; }
+      if (ink) { if (s < 0) s = x; e = x; blank = 0; }
+      else if (s >= 0 && (++blank >= 3 * lh || x === b.x1)) { pieces.push(rect(s, b.y0, e + 1 - s, b.y1 - b.y0)); s = -1; blank = 0; }
+    }
+  });
+  /* the parts of one formula stacked up (a fraction's top, its bar and its bottom; a raised power): one piece */
+  pieces.sort((a, b) => a.y - b.y);
+  const groups = [];
+  pieces.forEach(p => {
+    const q = groups.find(q => xOverlap(q, p) > 0.3 * Math.min(q.w, p.w) && p.y - bottom(q) < 0.4 * Math.max(lh, Math.min(q.h, p.h)));
+    if (q) Object.assign(q, union(q, p)); else groups.push(rect(p.x, p.y, p.w, p.h));
+  });
+  /* what the text reader did read as words (a ribbon, a title, instructions) is not handwriting */
+  const read = r => lines.some(l => yOverlap(l.r, r) > 0.3 * Math.min(l.r.h, r.h) && xOverlap(l.r, r) > 0 && (isProse(l.t) || l.t.replace(/[^A-Za-z]/g, '').length >= 4));
+  const pictures = (page.images || []).map(im => rect(im.x, im.y, im.w, im.h));
+  const density = r => { let n = 0, k = 0; for (let y = r.y; y < bottom(r); y += 2) for (let x = r.x; x < right(r); x += 2) { k++; if (on(x, y)) n++; } return n / Math.max(1, k); };
+  return groups.filter(r => r.h >= 0.8 * lh && r.h <= 8 * lh && r.w >= 2 * lh && r.w >= 1.2 * r.h &&
+    !read(r) && !inBox(r) && !pictures.some(p => inter(p, r) > 0.3 * r.w * r.h) && density(r) < 0.35).slice(0, 30);
+}
 
 /* where the maths of a problem is (one crop per line to read), what the instructions say, and what it asks for */
 function readProblem(p, lines, boxes, lh, page, worths) {
@@ -961,6 +1013,7 @@ function solveOptions(t, A, words, oneNote) {
   if (p && p.cropOcr) o.cropOcr = p.cropOcr;
   if (p && !p.manual && p.crops && p.crops.length > 1 && p.crops.every(c => c.h >= 0.65 * lh) && !p.crops.some(c => c.h < 0.65 * Math.max.apply(null, p.crops.map(q => q.h)) && c.w < 0.75 * Math.max.apply(null, p.crops.map(q => q.w)))) {   /* half a stacked fraction is both shorter and narrower */ o.lineCrops = p.crops; o.lines = false; }
   if (p && typeof p.n === 'number') o.number = p.n;
+  if (p && p.wordy) o.wordProblem = (p.ocrLines || []).join(' ').replace(/^\s*\(?#?\d{1,3}[.):]\s*/, '');
   return o;
 }
 

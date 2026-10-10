@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, Tray, Menu, globalShortcut, screen, desktopCapturer, ipcMain, nativeImage, clipboard, shell, dialog, protocol, Notification } = require('electron');
+const { app, BrowserWindow, Tray, Menu, globalShortcut, screen, desktopCapturer, ipcMain, nativeImage, clipboard, shell, dialog, protocol, Notification, net } = require('electron');
 const { execFile, spawn } = require('child_process');
 const os = require('os');
 const path = require('path');
@@ -14,6 +14,8 @@ const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '
 function serveApp() {
   protocol.handle('mathbench', async req => {
     const rel = decodeURIComponent(new URL(req.url).pathname).replace(/^\/+/, '');
+    /* the word-problem reader's files, downloaded into the user profile (too big for the installer) */
+    if (/^models\//.test(rel)) return serveModel(rel.slice('models/'.length));
     const file = path.normalize(path.join(__dirname, rel));
     const allowed = SERVED.some(s => file === path.join(__dirname, s) || file.startsWith(path.join(__dirname, s) + path.sep));
     if (!allowed) return new Response('Not found', { status: 404 });
@@ -346,6 +348,86 @@ ipcMain.on('assist:place', async (_e, steps) => {
   if (r && r.error) notify('Mathbench could not type the answer', 'Click the box and try again.');
   else notify(steps.length === 1 ? 'Put ' + steps[0].text : 'Answered ' + steps.length + ' problems', steps.map(x => (x.label ? x.label + ': ' : '') + x.text).join('   '));
 });
+
+/* ---------- Mathbench AI: the word-problem reader (Qwen2.5 1.5B Instruct, Apache 2.0), downloaded once on request ---------- */
+/* the model's weights split into chunks the browser engine can load, published with Mathbench's releases; size and SHA-256 of each */
+const AI_NAME = 'qwen';
+const AI_URL = 'https://github.com/meowskers101/mathbench/releases/download/ai-qwen2.5-1.5b-v1/';
+const AI_FILES = [
+  ['LICENSE', 11343, '832dd9e00a68dd83b3c3fb9f5588dad7dcf337a0db50f7d9483f310cd292e92e'],
+  ['config.json', 809, '215eb99c4955b0c42ea9f6e0980d922c228950c5dbc09bde6dc451fbba4d21f3'],
+  ['generation_config.json', 242, 'f7e7ce458658b2d40d9eb213b91b77a8bf698845ab89360976722d7ac46928a3'],
+  ['tokenizer.json', 7031673, 'a8506e7111b80c6d8635951a02eab0f4e1a8e4e5772da83846579e97b16f61bf'],
+  ['tokenizer_config.json', 7849, '6a14243f0ae04884e597b3f032c05e15de9f417318fdcac24ab4e2680e691430'],
+  ['onnx/model_q4.onnx', 1101892, 'e435b75b54d580b10e62855c02f2e1b5b871647f325141989ccd8e0b1402ca42'],
+  ['onnx/model_q4.onnx_data', 933494784, 'c2517b46ffa436067fc5e2bd7e191107c2c5c9f29892358e8639957b0057a287'],
+  ['onnx/model_q4.onnx_data_1', 523051008, 'eb66348addd20f327968fd2d7f44d498316cd9417a396e5bd827205f514a9605'],
+  ['onnx/model_q4.onnx_data_2', 330301440, '41d9ac3d3c027ab437377265f84d5c19deb5ebdc1693a05050c7cd6df48ffc88']
+];
+const AI_TOTAL = AI_FILES.reduce((s, f) => s + f[1], 0);
+const aiDir = () => path.join(app.getPath('userData'), 'ai', AI_NAME);
+const aiPath = f => path.join(aiDir(), ...f.split('/'));
+function aiHave() { return AI_FILES.reduce((s, f) => { try { const st = fs.statSync(aiPath(f[0])); return s + (st.size === f[1] ? f[1] : 0); } catch (e) { return s; } }, 0); }
+async function serveModel(rel) {
+  const f = AI_FILES.find(x => x[0] === rel.replace(new RegExp('^' + AI_NAME + '/'), ''));
+  if (!f || !rel.startsWith(AI_NAME + '/')) return new Response('Not found', { status: 404 });
+  const file = aiPath(f[0]);
+  try {
+    const st = await fs.promises.stat(file);
+    /* streamed: the biggest piece is almost a gigabyte */
+    const { Readable } = require('stream');
+    return new Response(Readable.toWeb(fs.createReadStream(file)), { headers: { 'content-type': /\.json$/.test(file) ? 'application/json' : 'application/octet-stream', 'content-length': String(st.size) } });
+  } catch (e) { return new Response('Not found', { status: 404 }); }
+}
+let aiJob = null;
+/* download every missing piece, resuming a part file, each checked against its SHA-256 before it is kept */
+async function aiDownload(send) {
+  if (aiJob) return aiJob.promise;
+  const crypto = require('crypto');
+  const ctl = new AbortController();
+  aiJob = { ctl: ctl };
+  aiJob.promise = (async () => {
+    let done = aiHave();
+    const tell = () => send({ have: done, total: AI_TOTAL });
+    tell();
+    for (const [name, size, sha] of AI_FILES) {
+      const dest = aiPath(name), part = dest + '.part';
+      try { if (fs.statSync(dest).size === size) continue; } catch (e) { /* not there yet */ }
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      let from = 0; try { from = fs.statSync(part).size; } catch (e) { from = 0; }
+      if (from >= size) { try { fs.unlinkSync(part); } catch (e) { /* ignore */ } from = 0; }
+      const res = await net.fetch(AI_URL + name.replace(/^onnx\//, ''), { headers: from ? { Range: 'bytes=' + from + '-' } : {}, signal: ctl.signal });
+      if (!res.ok) throw new Error('download ' + res.status);
+      if (from && res.status !== 206) from = 0;   /* the server sent the whole file again */
+      const out = fs.createWriteStream(part, { flags: from ? 'a' : 'w' });
+      done += from;
+      const rd = res.body.getReader();
+      for (;;) {
+        const r = await rd.read();
+        if (r.done) break;
+        if (!out.write(Buffer.from(r.value))) await new Promise(ok => out.once('drain', ok));
+        done += r.value.length; tell();
+      }
+      await new Promise((ok, bad) => out.end(err => (err ? bad(err) : ok())));
+      /* check the whole piece */
+      const h = crypto.createHash('sha256');
+      await new Promise((ok, bad) => fs.createReadStream(part).on('data', d => h.update(d)).on('end', ok).on('error', bad));
+      if (h.digest('hex') !== sha) { fs.unlinkSync(part); throw new Error('A downloaded piece was damaged (' + name + '). Try again.'); }
+      fs.renameSync(part, dest);
+    }
+    done = aiHave(); tell();
+    return { ready: done === AI_TOTAL };
+  })();
+  try { return await aiJob.promise; } finally { aiJob = null; }
+}
+ipcMain.handle('ai:status', () => ({ have: aiHave(), total: AI_TOTAL, ready: aiHave() === AI_TOTAL, downloading: !!aiJob }));
+ipcMain.handle('ai:download', async e => {
+  const wc = e.sender;
+  try { return await aiDownload(p => { if (!wc.isDestroyed()) wc.send('ai:progress', p); }); }
+  catch (err) { return { ready: false, error: ctlAborted(err) ? 'cancelled' : String(err && err.message || err) }; }
+});
+ipcMain.on('ai:cancel', () => { if (aiJob) aiJob.ctl.abort(); });
+const ctlAborted = err => err && (err.name === 'AbortError' || /abort/i.test(String(err.message)));
 
 /* ---------- settings ---------- */
 ipcMain.handle('settings:get', () => ({ hotkey: cfg.hotkey, mode: cfg.mode, pasteHotkey: cfg.pasteHotkey }));

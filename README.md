@@ -29,6 +29,7 @@ Get the Windows installer, **Mathbench Setup.exe**, from the [Releases page](htt
 - OneNote mode (turns on by itself in OneNote): each answer is typed in a new note box in a clear spot, then dragged beside its problem. Mathbench never presses Ctrl + A in OneNote.
 - Small print: if the page's text is very small, Mathbench says so; zooming in (Ctrl and +) makes reading more reliable.
 - On a busy page (OneNote, notes, a long document), drag a box around the problem you want and press Enter. It only counts lines that look like maths, so sentences, dates and to-do lists are skipped.
+- Handwriting works too (a OneNote page you wrote on, a photo of your worksheet on screen). Windows' text reader cannot read handwriting, so Mathbench finds the handwritten lines from the ink itself and Formula AI reads them.
 - You can also click a problem (Shift-click for more) and then a box. "Answers only" (Alt + Enter) shows the answers without typing them.
 - Everything runs on your PC: Windows' own text reader and accessibility find the problems and boxes, Formula AI reads the maths, answers are typed as keystrokes, and the mouse is put back afterwards.
 
@@ -39,11 +40,18 @@ Problems are read on your computer by Formula AI, a maths recognition model that
 - Takes a screenshot only when you press a hotkey (or click Capture). Do it for me also moves the mouse to click answer boxes and types the answers, then puts the mouse back.
 - Saves settings in your user profile (`%APPDATA%\mathbench-desktop`).
 - "Save image" writes PNGs to Pictures\Mathbench captures.
+- Downloads Mathbench AI (about 1.8 GB, from Mathbench's GitHub releases) only when you click Download on a word problem.
 - It does not install services, change system settings, or start with Windows.
 
 ## Notes
 - Everything runs on the computer it is installed on, with no account, key or server: the solver, the formula reader and Do it for me all work offline. Only the page fonts are fetched from the internet when available (without them it falls back to system fonts).
 - Windows Win-key shortcuts (like Win + G, Game Bar's own) cannot be used as hotkeys by other apps.
+
+## Word problems: Mathbench AI
+Type a word problem ("Ben has $5 more than Carl. Together they have $45. How much does Carl have?") and press Solve. Mathbench AI reads it, writes the equation (x + x + 5 = 45, where x is Carl's money) and the solver finishes it. The card shows the equation it wrote, so you can check it matches the problem. In Do it for me, numbered word problems on a page are picked up too.
+- Mathbench AI is Qwen2.5 1.5B Instruct (Apache 2.0), a small language model run on your PC with Transformers.js, on the graphics card when it can (a few seconds per problem) and otherwise on the processor (slower).
+- It is not in the installer. The first time you solve a word problem, Mathbench asks before downloading it once (about 1.8 GB, into `%APPDATA%\mathbench-desktop\ai`); after that it works offline. A cancelled or broken download carries on where it stopped, and every piece is checked before it is kept.
+- On 24 school word problems it wrote a correct equation for 21. Check the equation before trusting the answer.
 
 ## About Formula AI
 Formula AI is pix2text-mfr 1.5 by breezedeus (MIT licence, https://huggingface.co/breezedeus/pix2text-mfr-1.5), a TrOCR encoder-decoder trained on images of printed and handwritten formulas. Mathbench ships an 8-bit copy (about 32 MB, in `renderer/mfr` as base64 text) and runs it with ONNX Runtime Web (`renderer/ort`), in a background worker so the window stays responsive. Two adjustments on top of the model: the picture is cropped with a white margin a fifth of the formula's size, and when the model is about to write a Greek letter that looks like a Latin one (chi for x, eta for y), it writes the Latin letter instead. The app serves its pages from `mathbench://app/` so the reader can load these files.
