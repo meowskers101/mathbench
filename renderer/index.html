@@ -1554,7 +1554,7 @@ function plainOf(p) {
 }
 
 /* ---------- mode routing ---------- */
-const LABELS = { solve: 'Solve', simplify: 'Simplify', expand: 'Expand', factor: 'Factor', diff: 'Derivative', integrate: 'Integral', limit: 'Limit', series: 'Series', sumprod: 'Sum / product', numeric: 'Calculate', plot: 'Graph', stats: 'Statistics', ntheory: 'Number theory', inequality: 'Inequality', partfrac: 'Partial fractions' };
+const LABELS = { solve: 'Solve', simplify: 'Simplify', expand: 'Expand', factor: 'Factor', diff: 'Derivative', integrate: 'Integral', limit: 'Limit', discont: 'Discontinuities', series: 'Series', sumprod: 'Sum / product', numeric: 'Calculate', plot: 'Graph', stats: 'Statistics', ntheory: 'Number theory', inequality: 'Inequality', partfrac: 'Partial fractions' };
 const MATH_ONLY = /\b(det|inv|transpose|eigs|combinations|permutations|mean|median|std|variance|mode|gcd|lcm|mod|isPrime|cross|dot|norm|trace|lusolve|identity|rank|factorial|setUnion|setIntersect|setDifference|and|or|xor|not|round|floor|ceil)\b/;
 
 function decideMode(p, mode, raw) {
@@ -1576,15 +1576,31 @@ function decideMode(p, mode, raw) {
 /* several lines that define functions and ask for a value ("f(x) = 2x + 1", "g(x) = x²", "f(g(3))"): put the definitions in,
    solve what is left, and show the working (the inside first). Anything else goes to the solver as it is */
 function run(raw, mode) {
-  const rows = String(raw || '').split(/\n/).map(t => t.trim()).filter(Boolean);
+  let rows = String(raw || '').split(/\n/).map(t => t.trim()).filter(Boolean);
+  let pieces = null;
+  if (rows.length > 1 && !run.inner) {
+    /* a function given in pieces becomes one line; an equation carried onto the next line is put back together */
+    const pw = piecewiseRows(rows);
+    rows = joinWrappedRows(pw.rows);
+    pieces = pw.fns;
+    if (pieces && rows.length === Object.keys(pieces).length) {
+      const n = Object.keys(pieces)[0];
+      throw uerr('This gives ' + n + ' piece by piece. Add a line saying what to find.', 'For example ' + n + '(2) on the next line, or ' + n + '(x) = 5.');
+    }
+    if (rows.length === 1) return runCore(rows[0], mode);
+    const eq = functionEquation(rows, mode, pieces);
+    if (eq) return eq;
+  }
   if (rows.length > 1 && !run.inner && typeof functionProblem === 'function') {
     let fn = null;
     try { fn = functionProblem(rows.join('\n'), null, {}); } catch (e) { fn = null; }
     if (fn) {
-      const steps = functionProblem.steps || [];
+      let steps = functionProblem.steps || [];
+      /* a piece-by-piece function: say which piece was used instead of showing the "if" behind it */
+      if (pieces) steps = steps.map(t => pieceStep(t, pieces));
       run.inner = true;
       try {
-        const m = /[A-Za-z]/.test(String(fn).replace(/sqrt|pi/g, '')) ? 'expand' : (mode && mode !== 'auto' ? mode : 'auto');
+        const m = /[A-Za-z]/.test(String(fn).replace(/sqrt|pi|NaN/g, '')) ? 'expand' : (mode && mode !== 'auto' ? mode : 'auto');
         let r;
         try { r = runCore(fn, m); } catch (e) { r = runCore(fn, 'auto'); }
         r.notes = steps.map(t => ({ text: t })).concat(r.notes || []);
@@ -1594,21 +1610,377 @@ function run(raw, mode) {
           const q = functionProblem.question || rows[rows.length - 1].replace(/^\s*(find|evaluate|what\s+is|work\s+out)\s*:?\s*/i, '').replace(/[\s?=]+$/, '');
           const src = String(fn).replace(/(\d|\))\s*\(/g, '$1*(');
           let val = null;
-          if (!/[A-Za-z]/.test(src.replace(/sqrt|pi/g, ''))) { const n = math.evaluate(src); if (typeof n === 'number' && isFinite(n)) val = stepNum(n); }
+          if (!/[A-Za-z]/.test(src.replace(/sqrt|pi|NaN/g, ''))) { const n = math.evaluate(src); if (typeof n === 'number' && isFinite(n)) val = stepNum(n); }
           else if (typeof math.rationalize === 'function') val = polyPretty(math.rationalize(src).toString());
           const toTex = t => String(t).replace(/\s+/g, '').replace(/∘/g, '\\circ ').replace(/²/g, '^{2}').replace(/³/g, '^{3}').replace(/[·×]/g, '\\cdot ');
-          if (val != null && q) r.lines = [{ text: q + ' = ' + val, tex: toTex(q) + '=' + toTex(val) }];
+          if (val != null && q) { r.lines = [{ text: q + ' = ' + val, tex: toTex(q) + '=' + toTex(val) }]; r.copyText = r.lines[0].text; r.copyTex = r.lines[0].tex; }
         } catch (e) { /* keep the solver's own line */ }
         r.inputTex = '';
         return r;
       } finally { run.inner = false; }
     }
   }
-  return runCore(raw, mode);
+  return runCore(rows.join('\n'), mode);
 }
+
+/* ---------- several lines that belong together ---------- */
+const ROW_REL = /<=|>=|!=|[=<>≤≥≠]|\\(?:le|ge|ne|leq|geq|neq)\b/;
+/* a row as plain linear text (LaTeX from the formula reader, or what was typed), for looking at its shape */
+function rowLinear(r) { return N.prepare(String(r).replace(/\\left\s*\\?\{|\\right\s*(?:\\?\}|\.)|\\left|\\right/g, ' ')).replace(/\s+/g, ' ').trim(); }
+/* "f(x) =" (and a brace) with nothing after it: the head of a function given in pieces, or of a definition on the next line */
+const ROW_HEAD = /^([A-Za-z])\s*\(\s*([A-Za-z])\s*\)\s*=\s*(?:\\left\s*)?(?:\\?\{|\\begin\{cases\})?\s*$/;
+
+/* an equation carried onto the next line: the next line starts with "=" or an operator, or this one ends with one
+   ("3x² + 5x − 2" over "= 4x + 8"; "f(x) =" over "3x + 2") */
+function joinWrappedRows(rows) {
+  const out = [];
+  rows.forEach(r => {
+    const prev = out[out.length - 1];
+    const carry = prev != null && (
+      /^\s*(?:[=<>≤≥≠+×÷·*/^]|\\(?:le|ge|ne|leq|geq|neq|cdot|times|div)\b)/.test(r) ||
+      /(?:[=+\-*/×÷·^(]|\\(?:cdot|times|div))\s*$/.test(prev) ||
+      /* "−2 = 4x" under "3x² + 5x": a minus that starts the rest, when only the two together make one equation */
+      (/^\s*[-−]/.test(r) && !ROW_REL.test(prev) && ROW_REL.test(r) && !/[A-Za-z]\s*\(/.test(prev)));
+    if (carry) out[out.length - 1] = prev + ' ' + r; else out.push(r);
+  });
+  return out;
+}
+
+/* a function given piece by piece:  f(x) = { x + 1, x < 0  /  x², x ≥ 0 }  ("if", "for", "when" and "otherwise" are read too).
+   The pieces become one definition math.js can work out, "((x < 0) ? (x + 1) : ((x >= 0) ? (x^2) : NaN))" */
+function piecewiseRows(rows) {
+  const out = [], fns = {};
+  const COND = /(?:-?\d*\.?\d+\s*(?:<=|>=|<|>)\s*)?[A-Za-z]\s*(?:<=|>=|<|>|!=)\s*-?\d*\.?\d+(?:\s*(?:<=|>=|<|>)\s*-?\d*\.?\d+)?\s*$|-?\d*\.?\d+\s*(?:<=|>=|<|>)\s*[A-Za-z](?:\s*(?:<=|>=|<|>)\s*-?\d*\.?\d+)?\s*$/;
+  const piece = (r, v) => {
+    let t = rowLinear(r).replace(/[,;]?\s*\.?\s*$/, '').trim();
+    const other = /^(.+?)\s*,?\s*(?:otherwise|else|elsewhere|for all other.*)$/i.exec(t);
+    if (other) return { val: other[1].replace(/\s*,\s*$/, ''), cond: null };
+    /* the words can come with the spaces taken out ("x+1ifx<0") */
+    t = t.replace(/(?:if|for|when|where)(?=\s*-?[\d.]*\s*[A-Za-z]?\s*(?:<|>|!=))/gi, ' , ');
+    const m = COND.exec(t);
+    if (!m || m.index === 0) return null;
+    const cond = m[0].trim(), val = t.slice(0, m.index).replace(/[\s,;]+$/, '').trim();
+    if (!val || ROW_REL.test(val) || !new RegExp('(^|[^A-Za-z])' + v + '(?![A-Za-z])').test(cond)) return null;
+    return { val: val, cond: cond };
+  };
+  /* "0 <= x < 3" -> "(0 <= x and x < 3)" so math.js reads it */
+  const condJs = c => {
+    const t = c.split(/(<=|>=|<|>|!=)/).map(s => s.trim());
+    const parts = [];
+    for (let k = 0; k + 2 < t.length; k += 2) parts.push('(' + t[k] + ' ' + t[k + 1] + ' ' + t[k + 2] + ')');
+    return parts.length > 1 ? '(' + parts.join(' * ') + ')' : parts[0];   /* true * true: "and" would be read as a letter product */
+  };
+  for (let i = 0; i < rows.length; i++) {
+    const lin = rowLinear(rows[i]);
+    let h = ROW_HEAD.exec(rows[i].trim()) || ROW_HEAD.exec(lin), first = null;
+    /* the first piece can sit on the head's own line: "f(x) = { x + 1, x < 0" */
+    if (!h) {
+      const m = /^([A-Za-z])\s*\(\s*([A-Za-z])\s*\)\s*=\s*(.+)$/.exec(lin);
+      if (m) { const p = piece(m[3].replace(/^\(\s*/, ''), m[2]); if (p && p.cond) { h = m; first = p; } }
+    }
+    if (!h) { out.push(rows[i]); continue; }
+    const ps = first ? [first] : [];
+    let j = i + 1;
+    for (; j < rows.length; j++) { const p = piece(rows[j], h[2]); if (!p) break; ps.push(p); if (!p.cond) { j++; break; } }
+    if (ps.length < 2 || !ps.slice(0, -1).every(p => p.cond)) { out.push(rows[i]); continue; }
+    let body = ps[ps.length - 1].cond ? 'NaN' : '(' + ps[ps.length - 1].val + ')';
+    for (let k = ps.length - (ps[ps.length - 1].cond ? 1 : 2); k >= 0; k--) body = '(' + condJs(ps[k].cond) + ' ? (' + ps[k].val + ') : ' + body + ')';
+    ps.forEach(p => { if (p.cond) p.js = condJs(p.cond); });
+    fns[h[1]] = { v: h[2], pieces: ps };
+    out.push(h[1] + '(' + h[2] + ') = ' + body);
+    i = j - 1;
+  }
+  return { rows: out, fns: Object.keys(fns).length ? fns : null };
+}
+/* a piece-by-piece function as it is written on paper, with its brace: f(x) = { x + 1 if x < 0, x² if x ≥ 0 } */
+function piecewiseTex(fns) {
+  const condTex = c => String(c).replace(/<=/g, '\\le ').replace(/>=/g, '\\ge ').replace(/!=/g, '\\ne ');
+  const valTex = t => { try { return understoodTex(N.parse(t, normOpts())); } catch (e) { return texIn(t); } };
+  return Object.keys(fns).map(n => n + '(' + fns[n].v + ')=\\begin{cases}' + fns[n].pieces.map(p => valTex(p.val) + ' & ' + (p.cond ? condTex(p.cond) : '\\text{otherwise}')).join('\\\\') + '\\end{cases}').join('\\\\');
+}
+/* one line of the function working, "f(-2) = ((-2 < 0) ? … ) = -1", said the way a person would: which piece, and why */
+function pieceStep(t, fns) {
+  const m = /^\s*([A-Za-z])\s*\(\s*(.+?)\s*\)\s*=\s*(.+)$/.exec(t);
+  if (!m || !fns[m[1]] || !/\?/.test(m[3])) return t;
+  const end = /\s=\s*(-?\d+(?:\.\d+)?)\s*$/.exec(m[3]);
+  m[4] = end ? end[1] : null;
+  const f = fns[m[1]];
+  let a;
+  try { a = math.evaluate(m[2].replace(/(\d|\))\s*\(/g, '$1*(')); } catch (e) { return t; }
+  if (typeof a !== 'number') return t;
+  const sc = { [f.v]: a };
+  const p = f.pieces.find(q => { if (!q.cond) return true; try { return !!math.evaluate(q.js, sc); } catch (e) { return false; } });
+  if (!p) return m[1] + '(' + m[2] + ') is not defined: ' + m[2] + ' is in none of the pieces';
+  const why = p.cond ? m[2] + ' fits ' + p.cond.replace(/<=/g, '≤').replace(/>=/g, '≥') : 'no other piece fits ' + m[2];
+  return m[1] + '(' + m[2] + '): ' + why + ', so use ' + p.val.replace(/\^\((\d)\)|\^(\d)/g, (s, x, y) => N.TO_SUP[x || y] || s) + (m[4] ? '. ' + m[1] + '(' + m[2] + ') = ' + m[4].trim() : '');
+}
+
+/* functions defined on some lines and an equation in them on another: "h(x) = 4x − 7" with "h(x) = 9", "f(x) = g(x)", "f(a) > 3".
+   Each call is replaced by its definition and the equation (or inequality) that is left is solved */
+/* the lines that define a function ("f(x) = …", first one per name) and the other lines */
+function splitDefs(rows) {
+  const defs = {}, asks = [];
+  for (const r of rows) {
+    const lin = rowLinear(r);
+    const d = /^([A-Za-z])\s*\(\s*([A-Za-z])\s*\)\s*=\s*(.+)$/.exec(lin);
+    if (d && !defs[d[1]] && !new RegExp('(^|[^A-Za-z])' + d[1] + '\\s*\\(').test(d[3])) { defs[d[1]] = { v: d[2], body: d[3] }; continue; }
+    asks.push(lin);
+  }
+  return { defs: defs, asks: asks };
+}
+/* every call of a defined function replaced by its definition, innermost first; null when a call is left that cannot be */
+function substCalls(s, defs) {
+  const names = Object.keys(defs), steps = [];
+  if (!names.length) return { s: s, steps: steps };
+  const callRe = new RegExp('(^|[^A-Za-z])(' + names.join('|') + ')\\s*\\(');
+  for (let guard = 0; guard < 30; guard++) {
+    const re = new RegExp(callRe.source, 'g');
+    let m, done = false;
+    while ((m = re.exec(s))) {
+      const open = m.index + m[0].length - 1, close = N.matchClose(s, open);
+      if (close < 0) return null;
+      const arg = s.slice(open + 1, close).trim();
+      if (callRe.test(arg)) { re.lastIndex = open + 1; continue; }
+      const d = defs[m[2]];
+      const body = d.body.replace(new RegExp('(^|[^A-Za-z])' + d.v + '(?![A-Za-z])', 'g'), (x, pre) => pre + (arg === d.v ? d.v : '(' + arg + ')'));
+      steps.push(m[2] + '(' + arg + ') = ' + body);
+      s = s.slice(0, m.index + m[1].length) + '(' + body + ')' + s.slice(close + 1);
+      done = true; break;
+    }
+    if (!done) break;
+  }
+  return callRe.test(s) ? null : { s: s, steps: steps };
+}
+function functionEquation(rows, mode, pieces) {
+  const { defs, asks } = splitDefs(rows);
+  const names = Object.keys(defs);
+  if (!names.length || asks.length !== 1) return null;
+  const callRe = new RegExp('(^|[^A-Za-z])(' + names.join('|') + ')\\s*\\(');
+  /* a limit or a continuity question about the functions: put them in and hand it to that mode */
+  if (CALC_ASK.test(asks[0])) return functionCalc(asks[0], defs, mode, pieces, rows);
+  if (!ROW_REL.test(asks[0]) || !callRe.test(asks[0]) || /\?\s*$/.test(asks[0])) return null;
+  const sub = substCalls(asks[0], defs);
+  if (!sub) return null;
+  const s = sub.s, steps = sub.steps;
+  /* with nothing left to find (f(2) = 7 with f known), it is a check, which the function steps already handle */
+  if (!N.extractVars(N.finalizeExpr(s)).length) return null;
+  run.inner = true;
+  let r;
+  try { r = runCore(s, mode); } finally { run.inner = false; }
+  /* a piece-by-piece function is not shown as its "if" form */
+  const said = steps.map(t => pieces && pieces[t[0]] && /\?/.test(t) ? t[0] + ' is given piece by piece: each piece counts only on its own stretch' : 'Put in ' + t);
+  r.notes = said.map(t => ({ text: t })).concat(/\?/.test(s) ? [] : [{ text: 'So solve ' + s.replace(/\s+/g, ' ') }], r.notes || []);
+  r.modeLabel = 'Functions';
+  r.raw = rows.join('\n');
+  if (pieces) r.inputTex = piecewiseTex(pieces);
+  return r;
+}
+/* ---------- calculus asked in words: limits and continuity ---------- */
+const CALC_ASK = /\blim(?:it)?\b|lim_|\bapproach|\btends?\s+to\b|discontinu|continuous|asymptote|\bholes?\b/i;
+/* "f(x) = …" on one line and "lim x→2 f(x)" or "Find the discontinuities" on another: put the definitions in, then work it out */
+function functionCalc(ask, defs, mode, pieces, rows) {
+  const names = Object.keys(defs);
+  let q = ask, steps = [];
+  const callRe = new RegExp('(^|[^A-Za-z])(' + names.join('|') + ')\\s*\\(');
+  if (callRe.test(q)) { const sub = substCalls(q, defs); if (!sub) return null; q = sub.s; steps = sub.steps; }
+  else if (names.length === 1) {
+    /* the question names no function ("Find the discontinuities", "lim x→2"): it is about the one defined */
+    const d = defs[names[0]], word = new RegExp('(^|[^A-Za-z])' + names[0] + '(?![A-Za-z(])');
+    if (word.test(q)) q = q.replace(word, (m, pre) => pre + '(' + d.body + ')');   /* "where is f discontinuous" */
+    else q = q.replace(/[\s,.:;?]+$/, '') + ' ' + (/\b(?:of|for|in)\s*$/i.test(q) || /\blim/i.test(q) ? '' : 'of ') + '(' + d.body + ')';
+    steps.push(names[0] + '(' + d.v + ') = ' + d.body);
+  } else return null;
+  run.inner = true;
+  let r;
+  try { r = runCore(q, mode); } finally { run.inner = false; }
+  const said = steps.map(t => pieces && pieces[t[0]] && /\?/.test(t) ? t[0] + ' is given piece by piece: each piece counts only on its own stretch' : 'Using ' + t);
+  /* a limit of a piece-by-piece function: the answer line shows f(x), not its "if" form */
+  if (names.length === 1) {
+    const nm = names[0] + '(' + defs[names[0]].v + ')';
+    r.lines = (r.lines || []).map(l => !/\?/.test(l.text) ? l : {
+      text: (/^lim\[[^\]]*\]/.exec(l.text) || [''])[0] + ' ' + nm + ' = ' + l.text.split(' = ').pop(),
+      tex: (/^\\lim_\{[^}]*\}/.exec(l.tex) || [''])[0] + ' ' + nm + '=' + l.tex.split('=').pop() });
+    r.copyText = r.lines.map(l => l.text).join('\n'); r.copyTex = r.lines.map(l => l.tex).join(' \\\\\n');
+  }
+  r.notes = said.map(t => ({ text: t })).concat(r.notes || []);
+  r.raw = rows.join('\n');
+  if (pieces) r.inputTex = piecewiseTex(pieces);
+  return r;
+}
+/* a limit or a continuity question written in words -> what the calculus modes read.
+   "limit of (x²−4)/(x−2) as x approaches 2", "the limit as x → 0 from the right of sin(x)/x" -> { text: "lim_(x->2) …" }
+   "find the discontinuities of 1/(x−3)", "where is f(x) = … discontinuous", "is … continuous at x = 1" -> { discont: { expr, at } } */
+function calcWords(text) {
+  const t = String(text).replace(/\s+/g, ' ').trim().replace(/[?.]+$/, '').trim();
+  if (!CALC_ASK.test(t)) return null;
+  const LEAD = '^(?:(?:find|evaluate|determine|compute|calculate|work out|what is|state|give|list|identify|locate)\\s+)?(?:all\\s+)?(?:the\\s+)?';
+  const toward = '(?:approaches|approaching|tends to|tending to|goes to|going to|->|→)';
+  const target = s => s.trim().replace(/^(?:positive|plus)\s+infinity$|^\+?\s*infinity$|^\+?∞$/i, 'Infinity').replace(/^(?:negative|minus)\s+infinity$|^-\s*(?:infinity|∞)$/i, '-Infinity');
+  const side = s => !s ? '' : /left|below/i.test(s) ? '-' : '+';
+  const lim = (expr, v, a, sd) => ({ text: 'lim_(' + v + '->' + target(a) + side(sd) + ') ' + expr.trim().replace(/^(?:of\s+)/i, '') });
+  let m;
+  if ((m = new RegExp(LEAD + 'limit (?:of )?(.+?),? as ([A-Za-z]) ' + toward + ' ?(.+?)(?: from (?:the )?(left|right|below|above))?$', 'i').exec(t))) return lim(m[1], m[2], m[3], m[4]);
+  if ((m = new RegExp(LEAD + '(?:limit|lim) (?:as )?([A-Za-z]) ?' + toward + ' ?(\\S+?)(?: from (?:the )?(left|right|below|above))?(?: of|,)? (.+)$', 'i').exec(t))) return lim(m[4], m[1], m[2], m[3]);
+  /* "as x → 2, f(x) → ?" */
+  if ((m = new RegExp('^as ([A-Za-z]) ' + toward + ' ?(\\S+?)(?: from (?:the )?(left|right))?,? (.+?) ' + toward + ' ?\\??$', 'i').exec(t))) return lim(m[4], m[1], m[2], m[3]);
+  /* continuity: the function, and the point when one is asked about */
+  const strip = e => e.trim().replace(/^(?:of|for|in)\s+/i, '').replace(/^(?:the )?function\s+/i, '').replace(/^(?:[A-Za-z]\s*\(\s*[A-Za-z]\s*\)|y)\s*=\s*/, '').replace(/[,:;]\s*$/, '').trim();
+  const KIND = '(?:points? of )?(?:discontinuit(?:y|ies)|vertical asymptotes?|asymptotes?|holes?|breaks?)';
+  if ((m = new RegExp(LEAD + KIND + '(?: (?:of|for|in))? (.+?)(?: at ([A-Za-z]) ?= ?(.+))?$', 'i').exec(t))) return { discont: { expr: strip(m[1]), at: m[3] || null } };
+  if ((m = /^(?:where|for what (?:values?|x))\s+(?:is|are)\s+(.+?)\s+(?:dis)?continuous$/i.exec(t))) return { discont: { expr: strip(m[1]), at: null } };
+  if ((m = /^is\s+(.+?)\s+(?:dis)?continuous(?:\s+at\s+([A-Za-z])\s*=\s*(.+))?$/i.exec(t))) return { discont: { expr: strip(m[1]), at: m[3] || null } };
+  if ((m = new RegExp('^(.+?)[,:;]?\\s+' + LEAD.slice(1) + KIND + '$', 'i').exec(t))) return { discont: { expr: strip(m[1]), at: null } };
+  return null;
+}
+
+/* ----- discontinuities: holes, jumps and vertical asymptotes ----- */
+/* points where the function can break: zeros of every denominator (and of a base raised to a negative power),
+   where tan / sec / cot / csc blow up, and the edges of a piece-by-piece definition */
+function breakCandidates(expr, v) {
+  needM();
+  const tree = math.parse(expr), dens = [], edges = [], notes = [];
+  const num = n => { try { const x = n.evaluate({}); return typeof x === 'number' && isFinite(x) ? x : null; } catch (e) { return null; } };
+  tree.traverse(n => {
+    if (n.type === 'OperatorNode' && n.op === '/') dens.push(n.args[1]);
+    if (n.type === 'OperatorNode' && n.op === '^') { const e = num(n.args[1]); if (e != null && e < 0) dens.push(n.args[0]); }
+    if (n.type === 'FunctionNode') {
+      const nm = n.fn && n.fn.name;
+      if (nm === 'tan' || nm === 'sec') dens.push(new math.FunctionNode('cos', [n.args[0]]));
+      if (nm === 'cot' || nm === 'csc') dens.push(new math.FunctionNode('sin', [n.args[0]]));
+      if (nm === 'floor' || nm === 'ceil' || nm === 'round') notes.push(nm + ' jumps wherever its inside reaches a whole number' + (nm === 'round' ? ' and a half' : '') + '.');
+    }
+    if (n.type === 'ConditionalNode') n.condition.traverse(k => { if (k.type === 'OperatorNode' && /^(?:<|>|<=|>=|==|!=|smaller|larger|smallerEq|largerEq)$/.test(k.op || k.fn)) k.args.forEach(a => { const x = num(a); if (x != null) edges.push(x); }); });
+  });
+  const pts = edges.slice();
+  /* zeros of each denominator: a fine scan on [-60, 60] for sign changes and for touching zero, each tightened by bisection */
+  dens.forEach(d => {
+    const g = realFn(d.toString(), v), safe = x => { let y; try { y = g(x); } catch (e) { y = NaN; } return y; };
+    const lo = -60, hi = 60, M = 24000, hstep = (hi - lo) / M;
+    let px = lo, py = safe(lo);
+    for (let k = 1; k <= M; k++) {
+      const x = lo + k * hstep, y = safe(x);
+      if (py === 0) pts.push(px);
+      else if (isFinite(py) && isFinite(y) && Math.sign(py) !== Math.sign(y) && y !== 0) {
+        let a = px, b = x, fa = py;
+        for (let it = 0; it < 60; it++) { const mid = (a + b) / 2, fm = safe(mid); if (!isFinite(fm)) break; if (Math.sign(fm) === Math.sign(fa)) { a = mid; fa = fm; } else b = mid; }
+        const r = (a + b) / 2;
+        /* a jump of the denominator itself (sign(x), |x|/x) is a break too; only a real zero is kept, checked on the function after */
+        pts.push(r);
+      }
+      px = x; py = y;
+    }
+    /* touching zero without crossing, as (x − 1)²: look for small local minima of |g| */
+    for (let k = 1; k < M; k++) {
+      const x = lo + k * hstep, a0 = Math.abs(safe(x - hstep)), a1 = Math.abs(safe(x)), a2 = Math.abs(safe(x + hstep));
+      if (a1 <= a0 && a1 <= a2 && a1 < 1e-3) {
+        let a = x - hstep, b = x + hstep;
+        for (let it = 0; it < 80; it++) { const m1 = a + (b - a) / 3, m2 = b - (b - a) / 3; if (Math.abs(safe(m1)) < Math.abs(safe(m2))) b = m2; else a = m1; }
+        const r = (a + b) / 2;
+        if (Math.abs(safe(r)) < 1e-9) pts.push(r);
+      }
+    }
+  });
+  /* tidy: snap to nice numbers, drop repeats */
+  const nice = x => { const q = Math.round(x / Math.PI * 4) / 4; if (q !== 0 && Math.abs(x - q * Math.PI) < 1e-8) return q * Math.PI; const k = C.classify(x, 1e-9); return k.kind === 'int' ? k.n : k.kind === 'frac' && k.d <= 100 ? k.n / k.d : x; };
+  const out = [];
+  pts.map(nice).sort((a, b) => a - b).forEach(x => { if (!out.some(y => Math.abs(y - x) < 1e-6 * Math.max(1, Math.abs(x)))) out.push(x); });
+  return { pts: out, notes: notes, periodic: dens.some(d => /\b(?:sin|cos)\(/.test(d.toString())) };
+}
+/* a one-sided limit estimated at 10⁻⁴ (3.9999 for 4) taken much closer to the point, when the function is smooth enough there to agree */
+function sideRefined(f, a, sign) {
+  const r = C.sideLimit(f, a, sign);
+  if (r.kind !== 'finite' || !Number.isFinite(a)) return r;
+  let y; try { y = f(a + sign * 1e-8 * Math.max(1, Math.abs(a))); } catch (e) { y = NaN; }
+  return typeof y === 'number' && isFinite(y) && Math.abs(y - r.value) < 1e-2 * Math.max(1, Math.abs(r.value)) ? Object.assign({}, r, { value: y }) : r;
+}
+/* what happens at one point: left and right limits against the value there */
+function breakAt(f, a) {
+  const L = sideRefined(f, a, -1), Rr = sideRefined(f, a, +1);
+  let fa; try { fa = f(a); } catch (e) { fa = NaN; }
+  const defined = typeof fa === 'number' && isFinite(fa);
+  const same = (p, q) => Math.abs(p - q) <= 1e-5 * Math.max(1, Math.abs(p));
+  if (L.kind === 'inf' || Rr.kind === 'inf') return { kind: 'infinite', L: L, R: Rr, fa: defined ? fa : null };
+  if (L.kind === 'finite' && Rr.kind === 'finite') {
+    if (same(L.value, Rr.value)) return defined && same(fa, L.value) ? { kind: 'none' } : { kind: 'removable', lim: (L.value + Rr.value) / 2, fa: defined ? fa : null };
+    return { kind: 'jump', L: L.value, R: Rr.value, fa: defined ? fa : null };
+  }
+  /* defined on one side only: the edge of the domain (√x at 0), not a break in the usual sense */
+  if ((L.kind === 'finite') !== (Rr.kind === 'finite')) return { kind: 'edge' };
+  return { kind: 'other' };
+}
+function hDiscont(c) {
+  needM();
+  const s0 = c.p.statements[0];
+  let expr = c.disc ? N.finalizeExpr(c.disc.expr) : s0 && (s0.rel === '=' && /^(?:y|[A-Za-z]\s*\(\s*[A-Za-z]\s*\)|[A-Za-z]\s*\*\s*\(\s*[A-Za-z]\s*\))$/.test(String(s0.lhs).trim()) ? s0.rhs : s0.rel ? null : s0.lhs);
+  if (!expr) throw uerr('Enter the function to check, such as (x² − 4)/(x − 2).', 'A line like f(x) = 1/(x − 3) works too.');
+  const v = fin(c.ui.variable) || pickVar(N.extractVars(expr).filter(n => n !== 'NaN'));
+  if (!v) throw uerr('There is no variable here, so nothing can break.', 'Enter a function of x, such as 1/(x − 3).');
+  const f = realFn(expr, v);
+  const at = c.disc && c.disc.at != null ? c.disc.at : fin(c.ui.point);
+  /* multiples of π/4 written with π (where tan breaks), anything else as the solver writes numbers */
+  const piPart = x => { const q = Math.round(x / Math.PI * 4); if (q === 0 || Math.abs(x - q * Math.PI / 4) > 1e-9) return null; const g = q % 4 === 0 ? 4 : q % 2 === 0 ? 2 : 1; return { n: q / g, d: 4 / g }; };
+  const T = x => { const p = piPart(x); return p ? (p.n < 0 ? '−' : '') + (Math.abs(p.n) === 1 ? '' : Math.abs(p.n)) + 'π' + (p.d > 1 ? '/' + p.d : '') : niceText(x, 1e-6); };
+  const TX = x => { const p = piPart(x); if (!p) return niceTex(x, 1e-6); const k = Math.abs(p.n) === 1 ? '' : Math.abs(p.n); return (p.n < 0 ? '-' : '') + (p.d > 1 ? '\\frac{' + k + '\\pi}{' + p.d + '}' : k + '\\pi'); };
+  const say = (a, b) => {
+    if (b.kind === 'infinite') return { tex: v + '=' + TX(a) + ':\\;\\text{infinite (vertical asymptote)}', text: v + ' = ' + T(a) + ': infinite discontinuity (vertical asymptote ' + v + ' = ' + T(a) + ')' };
+    if (b.kind === 'removable') return { tex: v + '=' + TX(a) + ':\\;\\text{removable (hole at }(' + TX(a) + ',\\,' + TX(b.lim) + ')\\text{)}', text: v + ' = ' + T(a) + ': removable discontinuity (hole at (' + T(a) + ', ' + T(b.lim) + ')' + (b.fa != null ? ', though the value there is ' + T(b.fa) : '') + ')' };
+    if (b.kind === 'jump') return { tex: v + '=' + TX(a) + ':\\;\\text{jump from }' + TX(b.L) + '\\text{ to }' + TX(b.R), text: v + ' = ' + T(a) + ': jump discontinuity (from ' + T(b.L) + ' on the left to ' + T(b.R) + ' on the right)' };
+    return { tex: v + '=' + TX(a) + ':\\;\\text{no limit (the function does not settle)}', text: v + ' = ' + T(a) + ': discontinuity where the function does not settle (no limit)' };
+  };
+  /* one point asked about: the three-part test */
+  if (at != null) {
+    const a = boundVal(at);
+    if (!Number.isFinite(a)) throw uerr('Give a number for the point, such as x = 2.');
+    const b = breakAt(f, a);
+    let fa; try { fa = f(a); } catch (e) { fa = NaN; }
+    const L = sideRefined(f, a, -1), Rr = sideRefined(f, a, +1);
+    const d = x => x.kind === 'finite' ? T(x.value) : x.kind === 'inf' ? (x.sign > 0 ? '∞' : '−∞') : 'no value';
+    const checks = [
+      { ok: typeof fa === 'number' && isFinite(fa), text: '1. ' + v + ' = ' + T(a) + ' is in the domain: ' + (typeof fa === 'number' && isFinite(fa) ? 'f(' + T(a) + ') = ' + T(fa) : 'f(' + T(a) + ') is not defined') + '.' },
+      { ok: L.kind === 'finite' && Rr.kind === 'finite' && Math.abs(L.value - Rr.value) <= 1e-5 * Math.max(1, Math.abs(L.value)), text: '2. The limit exists: from the left ' + d(L) + ', from the right ' + d(Rr) + '.' },
+      { ok: b.kind === 'none', text: '3. The limit equals the value there.' }
+    ];
+    const ok = b.kind === 'none' || b.kind === 'edge';
+    const head = ok ? { tex: '\\text{continuous at }' + v + '=' + TX(a), text: 'Continuous at ' + v + ' = ' + T(a) } : say(a, b);
+    return R({ lines: [line(head.tex, head.text)], checks: b.kind === 'edge' ? [] : checks, notes: b.kind === 'edge' ? [{ text: 'The function is only defined on one side of ' + T(a) + ', so it is continuous there from that side.' }] : [], graph: { exprs: [expr], v: v } });
+  }
+  const cand = breakCandidates(expr, v);
+  const lines = [], notes = cand.notes.map(t => ({ text: t }));
+  const found = [];
+  cand.pts.forEach(a => { const b = breakAt(f, a); if (b.kind !== 'none' && b.kind !== 'edge') found.push({ a: a, b: b }); });
+  /* tan(x) and the like break again and again, the same way, a fixed step apart: one line for the whole pattern */
+  const step = found.length >= 5 ? found[1].a - found[0].a : 0;
+  if (cand.periodic && step > 0 && found.every((q, i) => q.b.kind === found[0].b.kind && (!i || Math.abs(q.a - found[i - 1].a - step) < 1e-6 * Math.max(1, step)))) {
+    const a0 = found.slice().sort((p, q) => Math.abs(p.a) - Math.abs(q.a) || q.a - p.a)[0].a;
+    const what = found[0].b.kind === 'infinite' ? 'infinite discontinuities (vertical asymptotes)' : found[0].b.kind + ' discontinuities';
+    const z = Math.abs(a0) < 1e-12;
+    lines.push(line(v + '=' + (z ? '' : TX(a0) + '+') + 'k' + TX(step) + ',\\;k\\in\\mathbb{Z}', v + ' = ' + (z ? '' : T(a0) + ' + ') + 'k·' + T(step) + ' for every whole number k: ' + what));
+    notes.push({ text: 'The pattern repeats every ' + T(step) + '. Between −60 and 60 that is ' + found.length + ' points.' });
+  } else found.forEach(q => { const s = say(q.a, q.b); lines.push(line(s.tex, s.text)); });
+  if (!lines.length) {
+    lines.push(line('\\text{continuous wherever it is defined}', 'No discontinuities: continuous wherever it is defined'));
+    notes.push({ text: 'No denominator reaches 0 and nothing else breaks between −60 and 60.' });
+  } else {
+    const MEAN = { removable: 'Removable: the left and right limits agree but the point is missing (a hole); cancelling a common factor removes it.', infinite: 'Infinite: the values grow without bound (a vertical asymptote).', jump: 'Jump: the two sides head to different values.' };
+    const kinds = found.map(q => q.b.kind).filter((k, i, a) => MEAN[k] && a.indexOf(k) === i);
+    if (kinds.length) notes.push({ text: kinds.map(k => MEAN[k]).join(' ') });
+  }
+  return R({ lines: lines.slice(0, 40), notes: notes, graph: { exprs: [expr], v: v } });
+}
+
 function runCore(raw, mode) {
-  const text = String(raw || '').trim();
+  let text = String(raw || '').trim();
   if (!text) throw uerr('Type or paste an equation first.', 'Try the examples below the symbol keys.');
+  /* a limit or a continuity question in words */
+  if (!/^(?:stats|ntheory|plot|numeric)$/.test(mode || '')) {
+    let cw = null;
+    try { cw = calcWords(N.prepare(text).replace(/\s*->\s*/g, ' -> ')); } catch (e) { cw = null; }
+    if (cw && cw.text) { text = cw.text; if (mode === 'auto' || !mode) mode = 'limit'; }
+    else if (cw && cw.discont) {
+      const p = N.parse(cw.discont.expr, normOpts());
+      return withMeta(hDiscont({ raw: text, p: p, ui: readOpts(), mode: 'discont', disc: cw.discont }), 'discont', p, text);
+    }
+  }
   if (mode === 'stats') return withMeta(hStats({ raw: text }), mode, null, text);
   if (mode === 'ntheory') return withMeta(hNumber({ raw: text }), mode, null, text);
   if (looksUnits(text)) return withMeta(hUnits(text), 'numeric', null, text);
@@ -1846,12 +2218,53 @@ function linearFallback(eqs, vars) {
   const sol = math.lusolve(A, f0.map(x => -x)).map(r => r[0]);
   return [vars.map((x, i) => [x, niceText(sol[i], 1e-10)])];
 }
+/* more lines than unknowns: usually the steps of working ("3x + 5 = 20", "3x = 15", "x = 5") or a system with a spare equation.
+   Solve from the first lines that pin every unknown down, then check each line against that answer and say which ones do not hold */
+function solveOverdetermined(p, eqs, vars) {
+  if (solveOverdetermined.busy || !hasM()) return null;
+  const k = vars.length;
+  const combos = [];
+  (function pick(start, acc) { if (combos.length >= 20) return; if (acc.length === k) { combos.push(acc.slice()); return; } for (let i = start; i < eqs.length; i++) { acc.push(i); pick(i + 1, acc); acc.pop(); } })(0, []);
+  solveOverdetermined.busy = true;
+  try {
+    for (const combo of combos) {
+      let r;
+      try { r = runCore(combo.map(i => eqs[i]).join('\n'), 'solve'); } catch (e) { continue; }
+      /* each answer line "x = 5" (or "x = 1/2 ≈ 0.5") as a value to check with */
+      const cands = [];
+      let cur = {};
+      (r.lines || []).forEach(l => {
+        const m = /^\s*([A-Za-z_]\w*)\s*=\s*([^≈]+)/.exec(l.text || '');
+        if (!m || !vars.includes(m[1])) return;
+        let v; try { v = math.evaluate(m[2].trim()); } catch (e) { return; }
+        if (typeof v !== 'number' || !isFinite(v)) return;
+        if (m[1] in cur) { cands.push(cur); cur = {}; }
+        cur[m[1]] = v;
+      });
+      if (Object.keys(cur).length) cands.push(cur);
+      const full = cands.filter(s => vars.every(v => v in s));
+      if (!full.length) continue;
+      const holds = (st, sc) => { try { const d = math.evaluate('(' + st.lhs + ')-(' + st.rhs + ')', Object.assign({}, sc)); return Math.abs(typeof d === 'number' ? d : math.abs(d)) < 1e-7; } catch (e) { return false; } };
+      const good = full.filter(sc => p.statements.every(st => holds(st, sc)));
+      const use = good.length ? good : full;
+      const lines = (r.lines || []).filter(l => { const m = /^\s*([A-Za-z_]\w*)\s*=\s*([^≈]+)/.exec(l.text || ''); if (!m) return false; try { const v = math.evaluate(m[2].trim()); return use.some(sc => Math.abs(sc[m[1]] - v) < 1e-9); } catch (e) { return false; } });
+      const checks = p.statements.map((st, i) => {
+        const ok = use.some(sc => holds(st, sc));
+        return { ok: ok, text: 'Line ' + (i + 1) + ' (' + st.lhs + ' = ' + st.rhs + ') ' + (ok ? 'holds for this answer.' : 'does not hold for this answer: check this line.') };
+      });
+      const notes = [{ text: good.length ? 'There are more lines than unknowns. Every line agrees with the answer, so they are steps of the same problem.' : 'There are more lines than unknowns, and they do not all agree. The answer below comes from line' + (combo.length > 1 ? 's ' : ' ') + combo.map(i => i + 1).join(', ') + '.' }];
+      return R({ lines: lines.length ? lines : r.lines, notes: notes.concat(r.notes || []), checks: checks });
+    }
+  } finally { solveOverdetermined.busy = false; }
+  return null;
+}
 function solveSystem(c) {
   const p = c.p;
   const eqs = p.statements.map(s => s.lhs + '=' + s.rhs);
   const vars = N.extractVars(p.allText);
   let sets = [];
   if (hasN()) { try { sets = normalizeSolutions(nerdamer.solveEquations(eqs)); } catch (e) { sets = []; } }
+  if (!sets.length && eqs.length > vars.length) { const r = solveOverdetermined(p, eqs, vars); if (r) return r; }
   if (!sets.length) { try { sets = linearFallback(eqs, vars); } catch (e) { if (e.user) throw e; } }
   if (!sets.length) throw uerr('Could not solve this system.', 'Check that there are as many independent equations as unknowns (' + vars.join(', ') + ').');
   const lines = [], checks = [], notes = [];
@@ -2006,8 +2419,8 @@ HANDLERS.limit = function (c) {
   let dir = s ? s.direction : (c.ui.side === 'left' ? '-' : c.ui.side === 'right' ? '+' : null);
   const tv = boundVal(target);
   const f = realFn(ci.expr, ci.v);
-  const right = C.sideLimit(f, tv, +1), left = C.sideLimit(f, tv, -1);
-  const describe = r => r.kind === 'finite' ? niceText(r.value, 1e-5) : r.kind === 'inf' ? (r.sign > 0 ? '∞' : '−∞') : 'no limit';
+  const right = sideRefined(f, tv, +1), left = sideRefined(f, tv, -1);
+  const describe = r => r.kind === 'finite' ? niceText(r.value, 1e-6) : r.kind === 'inf' ? (r.sign > 0 ? '∞' : '−∞') : 'no limit';
   let res;
   const infTarget = !Number.isFinite(tv);
   if (infTarget) res = tv > 0 ? right : left;
@@ -2195,6 +2608,7 @@ function hNumber(c) {
 }
 
 HANDLERS.stats = hStats;
+HANDLERS.discont = hDiscont;
 HANDLERS.ntheory = hNumber;
 
 /* ----- plot ----- */
@@ -3821,6 +4235,15 @@ function updatePreview() {
       txt.textContent = ps.map(plainOf).join(', ');
       return;
     }
+    /* a function given piece by piece: shown with its brace, the other lines under it */
+    const rows = v.split('\n').map(t => t.trim()).filter(Boolean);
+    const pw = rows.length > 1 ? piecewiseRows(rows) : null;
+    if (pw && pw.fns) {
+      const rest = pw.rows.filter(r => !/^[A-Za-z]\s*\(\s*[A-Za-z]\s*\)\s*=\s*\(.*\?/.test(r));
+      box.innerHTML = mml('\\begin{gathered}' + [piecewiseTex(pw.fns)].concat(rest.map(r => { if (CALC_ASK.test(r) || /[A-Za-z]{4,}/.test(r.replace(/\\[A-Za-z]+/g, ''))) return '\\text{' + r.replace(/[\\{}$&#_%^~]/g, ' ') + '}'; try { return understoodTex(N.parse(r, normOpts())); } catch (e) { return texIn(r); } })).join('\\\\') + '\\end{gathered}', false);
+      txt.textContent = '';
+      return;
+    }
     const p = N.parse(v, normOpts());
     box.innerHTML = mml(understoodTex(p), false);
     txt.textContent = plainOf(p);
@@ -3843,7 +4266,8 @@ const MODES = [
   ['factor', 'Factor', 'Factor a polynomial, or split a whole number into primes.', 'x³ − 6x² + 11x − 6'],
   ['diff', 'Derivative', 'Differentiate with respect to a variable, to any order.', 'x³ sin(x)'],
   ['integrate', 'Integral', 'Indefinite integral, or definite with From and To. Use Infinity for improper integrals.', 'x² e^x'],
-  ['limit', 'Limit', 'Limit as the variable approaches a point, including infinity and one-sided limits.', 'sin(x)/x'],
+  ['limit', 'Limit', 'Limit as the variable approaches a point, including infinity and one-sided limits. Words work too: limit of sin(x)/x as x approaches 0.', 'sin(x)/x'],
+  ['discont', 'Discontinuities', 'Where a function breaks: holes, jumps and vertical asymptotes. Give a Point to test continuity there.', '(x² − 4)/(x − 2)'],
   ['series', 'Series', 'Taylor polynomial around a point.', 'e^x'],
   ['sumprod', 'Sum / product', 'Sum or product over a range of whole numbers.', 'n²'],
   ['numeric', 'Calculate', 'Numbers, fractions, complex numbers, matrices, vectors, combinatorics and unit conversions.', '(3 + 4i)(2 − i)'],
@@ -3852,7 +4276,7 @@ const MODES = [
   ['ntheory', 'Number theory', 'Prime factorisation of one whole number, or gcd and lcm of several.', '360']
 ];
 const OPT_FIELDS = {
-  auto: ['var'], solve: ['var'], diff: ['var', 'order'], integrate: ['var', 'lower', 'upper'], limit: ['var', 'point', 'side'], series: ['var', 'point', 'terms'], sumprod: ['var', 'lower', 'upper'], plot: ['xmin', 'xmax'], partfrac: ['var']
+  auto: ['var'], solve: ['var'], diff: ['var', 'order'], integrate: ['var', 'lower', 'upper'], limit: ['var', 'point', 'side'], discont: ['var', 'point'], series: ['var', 'point', 'terms'], sumprod: ['var', 'lower', 'upper'], plot: ['xmin', 'xmax'], partfrac: ['var']
 };
 const FIELD_HTML = {
   var: '<label class="fld">Variable<input id="o-var" type="text" size="6" maxlength="8" placeholder="auto" autocomplete="off" spellcheck="false"></label>',
@@ -3879,7 +4303,7 @@ function renderOpts() {
   const m = MODES.find(x => x[0] === st.mode);
   $('#mode-help').textContent = m ? m[2] : '';
   expr.placeholder = m ? m[3] : '';
-  $('#go').textContent = { auto: 'Solve', solve: 'Solve', simplify: 'Simplify', expand: 'Expand', factor: 'Factor', diff: 'Differentiate', integrate: 'Integrate', limit: 'Find limit', series: 'Expand series', sumprod: 'Evaluate', numeric: 'Calculate', plot: 'Draw graph', stats: 'Summarise', ntheory: 'Factorise' }[st.mode];
+  $('#go').textContent = { auto: 'Solve', solve: 'Solve', simplify: 'Simplify', expand: 'Expand', factor: 'Factor', diff: 'Differentiate', integrate: 'Integrate', limit: 'Find limit', discont: 'Find breaks', series: 'Expand series', sumprod: 'Evaluate', numeric: 'Calculate', plot: 'Draw graph', stats: 'Summarise', ntheory: 'Factorise' }[st.mode];
   updatePreview();
 }
 function setMode(m) {
@@ -4566,6 +4990,11 @@ function tidyModelTex(s) {
   s = String(s || '').trim();
   /* environment names may come out spelled letter by letter: \begin { m a t r i x } */
   s = s.replace(/\\(begin|end)\s*\{\s*((?:[A-Za-z*]\s*)+)\}/g, (m, c, n) => '\\' + c + '{' + n.replace(/\s+/g, '') + '}');
+  /* the reader can stop before the closing \end{aligned} of a long block: close it, so its rows still come out one per line */
+  { const b = new RegExp('\\\\begin\\s*\\{(' + ENV + ')\\}', 'g'); let m; const opened = [];
+    while ((m = b.exec(s))) opened.push(m[1]);
+    const closed = (s.match(new RegExp('\\\\end\\s*\\{' + ENV + '\\}', 'g')) || []).length;
+    for (let k = opened.length - 1; k >= closed; k--) s += ' \\end{' + opened[k] + '}'; }
   /* spacing and sizing commands carry no math */
   s = s.replace(/\\[!,;:>]|\\q?quad\b|\\(?:displaystyle|textstyle|scriptstyle|scriptscriptstyle)\b|\\(?:big|Big|bigg|Bigg)[lr]?\b/g, ' ');
   s = s.replace(/(?<!\\)\\ /g, ' ');
@@ -4821,7 +5250,13 @@ self.onmessage = async (e) => {
     const hist = new Uint32Array(256);
     for (let i = 0; i < n; i++) hist[Math.max(0, Math.min(255, grey[i] | 0))]++;
     const at = q => { let s = 0; for (let v = 0; v < 256; v++) { s += hist[v]; if (s >= q * n) return v; } return 255; };
-    const paper = at(0.6), inkLv = at(0.01), thr = Math.min(paper - 28, (paper + inkLv) / 2);
+    const paper = at(0.6);
+    /* the ink level: the darkest 1%, unless ink covers less than that (a short line in a wide picture, one line of several),
+       when the darkest 1% is mostly paper and faint-ink darkening would swell the letters into blobs: then from the ink alone */
+    let inkLv = at(0.01);
+    { let dark = 0; for (let v = 0; v < Math.max(0, paper - 28); v++) dark += hist[v];
+      if (dark > 0 && dark < 0.015 * n) { let s = 0; for (let v = 0; v < 256; v++) { s += hist[v]; if (s >= 0.1 * dark) { inkLv = Math.min(inkLv, v); break; } } } }
+    const thr = Math.min(paper - 28, (paper + inkLv) / 2);
     let x0 = w, y0 = h, x1 = -1, y1 = -1;
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (grey[y * w + x] < thr) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
     if (x1 < 0) { x0 = 0; y0 = 0; x1 = w - 1; y1 = h - 1; }
@@ -4877,7 +5312,7 @@ self.onmessage = async (e) => {
     const bands = [runs[0].slice()];
     for (const r of runs.slice(1)) { const last = bands[bands.length - 1]; if (r[0] - last[1] - 1 < 0.33 * tallest) last[1] = r[1]; else bands.push(r.slice()); }
     const real = bands.filter(b => b[1] - b[0] + 1 >= 0.3 * tallest);
-    if (real.length < 2 || real.length > 6) return [];
+    if (real.length < 2 || real.length > 12) return [];
     return real.map(b => [Math.max(0, Math.floor((b[0] - 0.15 * tallest) / k)), Math.min(src.height, Math.ceil((b[1] + 1 + 0.15 * tallest) / k))]);
   }
 
@@ -4902,9 +5337,11 @@ self.onmessage = async (e) => {
       const REL = /=|<|>|\\le|\\ge|\\ne|\\leq|\\geq|\\neq/g;
       const wholeRelations = (whole.tex.match(REL) || []).length;
       let bands = [];
-      /* a reading with no equation sign is an expression or a fraction: never split it, and skip the extra work.
+      /* always look for separate lines: two short lines in a wide picture ("f(x) = 2x + 5" over "f(3)") or lines set close together
+         can read as one garbled formula with no equation sign at all. A fraction's top and bottom are kept together below,
+         since a split is only used when the lines read as whole equations or definitions.
          opts.lines: the caller knows this picture holds several lines (a worksheet problem): always read them one by one */
-      if (wholeRelations >= 1 || opts.lines || canvas.height > 0.35 * canvas.width) { try { bands = lineBands(canvas); } catch (e) { bands = []; } }
+      try { bands = lineBands(canvas); } catch (e) { bands = []; }
       if (opts.lines && bands.length > 1) {
         const parts = [];
         for (const [y0, y1] of bands) {
@@ -4917,16 +5354,25 @@ self.onmessage = async (e) => {
       if (bands.length > Math.max(1, wholeRelations) || (bands.length > 1 && wholeRelations <= 1)) {
         const parts = [];
         for (const [y0, y1] of bands) {
-          const c = document.createElement('canvas'); c.width = canvas.width; c.height = Math.max(1, y1 - y0);
-          const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(canvas, 0, -y0);
+          /* white paper above and below the line: cut tight, a short line ("f(3)") loses the margin the reader needs and reads as something else */
+          const pad = Math.round(0.6 * (y1 - y0));
+          const c = document.createElement('canvas'); c.width = canvas.width; c.height = Math.max(1, y1 - y0 + 2 * pad);
+          const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(canvas, 0, y0, canvas.width, y1 - y0, 0, pad, canvas.width, y1 - y0);
           const p = await readOne(c, !!opts.photo); p.tex = tidyModelTex(p.raw); parts.push(p);
         }
         const allRelations = parts.every(p => (p.tex.match(REL) || []).length >= 1);
         const wholeRel = (whole.tex.match(REL) || []).length, partsRel = parts.reduce((s, p) => s + (p.tex.match(REL) || []).length, 0);
         /* a function problem: a line defines a function ("f(x) = 2x + 1") and another asks for a value ("Find f(g(3))"), so not every line has "=" */
         const defines = parts.some(p => /^\s*(?:\\[a-z]+\s*)?[A-Za-z]\s*\(\s*[A-Za-z]\s*\)\s*=/.test(p.tex)), asks = parts.some(p => !/=/.test(p.tex) && /[A-Za-z]\s*\(/.test(p.tex.replace(/\\[a-z]+/g, '')));
-        if ((allRelations && partsRel > wholeRel) || (defines && (asks || parts.length >= 2))) {
-          return { raw: parts.map(p => p.raw).join('\n'), tex: parts.map(p => p.tex).join('\n'), minP: Math.min(...parts.map(p => p.minP)), meanP: parts.reduce((s, p) => s + p.meanP, 0) / parts.length };
+        const joined = { raw: parts.map(p => p.raw).join('\n'), tex: parts.map(p => p.tex).join('\n'), minP: Math.min(...parts.map(p => p.minP)), meanP: parts.reduce((s, p) => s + p.meanP, 0) / parts.length };
+        if ((allRelations && partsRel > wholeRel) || (defines && (asks || parts.length >= 2))) return joined;
+        /* one long equation written over two or more lines ("3x² + 5x − 2" with "= 4x + 8" under it): a line that starts with "=" or
+           an operator carries on the line above. Taken when, put back together, every line is an equation and the split read it more surely */
+        const carries = p => /^\s*(?:=|<|>|\\(?:le|ge|ne|leq|geq|neq)\b|\+|-|\\(?:cdot|times|div)\b)/.test(p.tex);
+        if (parts.slice(1).some(carries)) {
+          const lines = [];
+          parts.forEach((p, i) => { if (i && carries(p)) lines[lines.length - 1] += ' ' + p.tex; else lines.push(p.tex); });
+          if (lines.every(l => (l.match(REL) || []).length >= 1) && partsRel >= wholeRel && (partsRel > wholeRel || joined.meanP > whole.meanP)) return joined;
         }
       }
       return whole;
@@ -5252,6 +5698,8 @@ function boot() {
 if (/[?&]bench=1\b/.test(location.search)) {
   window.__mbSolve = (image, opts) => { window.__mbTries = []; return solveForPaste(image, opts); };
   window.__mbRun = (t, m) => run(t, m || 'auto');
+  window.__mbReadCanvas = async (c, opts) => { const r = await FormulaAI.read(c, Object.assign({ photo: false }, opts || {})); return r && r.tex; };
+  window.__mbTidy = tidyModelTex;
   window.__mbFill = t => { fillBox(t, '', null); return document.querySelector('#expr').value; };
   window.__mbReadPic = async url => { const im = new Image(); im.src = url; await im.decode(); const c = document.createElement('canvas'); c.width = im.naturalWidth; c.height = im.naturalHeight; c.getContext('2d').drawImage(im, 0, 0); const r = await FormulaAI.read(c, {}); return r ? r.tex : null; };
   window.__mbReadAt = async (url, k) => { const im = new Image(); im.src = url; await im.decode(); const c = document.createElement('canvas'); c.width = im.naturalWidth * k; c.height = im.naturalHeight * k; const g = c.getContext('2d'); g.imageSmoothingQuality = 'high'; g.drawImage(im, 0, 0, c.width, c.height); const r = await FormulaAI.read(c, { photo: false }); return r ? r.tex + ' ' + (r.meanP || 0).toFixed(2) : null; };
