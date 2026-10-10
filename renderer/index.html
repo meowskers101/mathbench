@@ -158,6 +158,11 @@ details.ref summary { cursor: pointer; font-weight: 600; }
 .card-raw { font: 400 13px var(--font-mono); color: var(--muted); overflow-wrap: anywhere; min-width: 0; }
 .card-b { padding: 14px; display: grid; gap: 12px; min-width: 0; }
 .card-f { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 14px; border-top: 1px solid var(--line); }
+.ways { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--line); }
+.ways-t { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); margin-right: 4px; }
+.way-ask { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%; margin-top: 4px; font-size: 14px; }
+.way-ask[hidden] { display: none; }
+.way-ask input { font: inherit; padding: 4px 6px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); color: var(--ink); }
 .card-f .btn:last-child { margin-left: auto; }
 .res { display: grid; gap: 4px; }
 .res-line { overflow-x: auto; padding-block: 2px; }
@@ -2161,8 +2166,19 @@ HANDLERS.solve = function (c) {
     } catch (e) { /* none */ }
   }
   const lines = [], checks = [], notes = [];
+  /* a root where either side is undefined is not a solution: (x² − 4)/(x − 2) = 0 has x = −2 only, x = 2 divides by zero */
+  if (vars.length === 1 && hasM() && roots.length) {
+    const sides = [s0.lhs, s0.rhs].map(t => { try { return math.compile(t); } catch (e) { return null; } });
+    const undef = r => { let x; try { x = math.evaluate(String(r)); } catch (e) { return false; } if (typeof x !== 'number' || !isFinite(x)) return false;
+      return sides.some(c => { if (!c) return false; let y; try { y = c.evaluate({ [v]: x }); } catch (e) { return true; } return typeof y === 'number' ? !isFinite(y) : (y && y.isComplex ? !isFinite(y.re) || !isFinite(y.im) : false); }); };
+    const out = roots.filter(undef);
+    if (out.length) {
+      roots = roots.filter(r => !out.includes(r));
+      notes.push({ text: out.map(r => v + ' = ' + r).join(', ') + (out.length > 1 ? ' are' : ' is') + ' left out: the equation is undefined there (it would divide by zero).' });
+    }
+  }
   if (!roots.length) {
-    return R({ lines: [line('\\text{No solution found}', 'No solution found')], notes: [{ text: 'No real or complex solution was found for ' + v + '. If you expected one, check the equation, or try Graph to see where the two sides meet.' }], graph: vars.length === 1 ? { exprs: [s0.lhs, s0.rhs], v: v } : null });
+    return R({ lines: [line('\\text{No solution found}', 'No solution found')], notes: notes.concat([{ text: 'No real or complex solution was found for ' + v + '. If you expected one, check the equation, or try Graph to see where the two sides meet.' }]), graph: vars.length === 1 ? { exprs: [s0.lhs, s0.rhs], v: v } : null });
   }
   roots.forEach(r => {
     let a = null;
@@ -2649,6 +2665,72 @@ HANDLERS.plot = function (c) {
 };
 
 /* ---------- cards ---------- */
+/* ---------- other ways to answer: every method that fits this problem, one click away ---------- */
+/* the card's problem as the solver read it: a limit or continuity question in words becomes its maths */
+function wayParse(raw) {
+  let cw = null;
+  try { cw = calcWords(N.prepare(raw).replace(/\s*->\s*/g, ' -> ')); } catch (e) { cw = null; }
+  if (cw && cw.text) return N.parse(cw.text, normOpts());
+  if (cw && cw.discont) return N.parse(cw.discont.expr, normOpts());
+  return N.parse(raw, normOpts());
+}
+/* [{ id, label, ask }]: ask is 'point' (a limit: where x goes) or 'range' (a definite integral: from and to) */
+function waysFor(card) {
+  const r = card.res;
+  if (!r || r.err || !card.raw) return [];
+  if (/\n/.test(String(card.raw).trim())) {   /* several lines: a system can be graphed or solved; function problems keep to their own answer */
+    let p; try { p = wayParse(card.raw); } catch (e) { return []; }
+    return p.type === 'system' ? [{ id: 'solve', label: 'Solve' }, ...(p.vars.length === 2 ? [{ id: 'plot', label: 'Graph' }] : [])].filter(w => w.id !== r.mode) : [];
+  }
+  let p; try { p = wayParse(card.raw); } catch (e) { return []; }
+  if (p.empty) return [];
+  const out = [];
+  if (p.type === 'equation' || p.type === 'inequality') {
+    out.push(p.type === 'equation' ? { id: 'solve', label: 'Solve' } : { id: 'inequality', label: 'Solve the inequality' });
+    if (p.vars.length === 1) out.push({ id: 'plot', label: 'Graph both sides' });
+    return out.filter(w => w.id !== r.mode);
+  }
+  if (p.type === 'system') return [{ id: 'solve', label: 'Solve' }].filter(w => w.id !== r.mode);
+  const expr = p.type === 'calculus' ? (p.struct && p.struct.expr) : p.plain;
+  if (!expr) return [];
+  const vars = N.extractVars(expr);
+  if (!vars.length) {
+    out.push({ id: 'numeric', label: 'Calculate' });
+    if (/^\s*\d{1,15}\s*$/.test(card.raw)) out.push({ id: 'ntheory', label: 'Prime factors' });
+  } else {
+    out.push({ id: 'simplify', label: 'Simplify' }, { id: 'expand', label: 'Expand' }, { id: 'factor', label: 'Factor' });
+    if (vars.length === 1) out.push({ id: 'roots', label: 'Solve = 0' });
+    out.push({ id: 'diff', label: vars.length > 1 ? 'Partial derivative' : 'Derivative' }, { id: 'integrate', label: 'Integral' });
+    if (vars.length === 1) {
+      out.push({ id: 'intdef', label: 'Definite integral…', ask: 'range' }, { id: 'limit', label: 'Limit…', ask: 'point' },
+        { id: 'series', label: 'Taylor series' }, { id: 'discont', label: 'Discontinuities' }, { id: 'plot', label: 'Graph' });
+      if (/\//.test(expr)) out.push({ id: 'partfrac', label: 'Partial fractions' });
+    }
+  }
+  /* not the way it was just done (a limit card does not offer a plain limit again; its expression's other ways stay) */
+  const used = p.type === 'calculus' ? ({ limit: 'limit', integrate: p.struct.lower != null ? 'intdef' : 'integrate', diff: 'diff' }[p.op] || r.mode) : r.mode;
+  return out.filter(w => w.id !== used);
+}
+function waysHTML(card) {
+  const ws = waysFor(card);
+  if (!ws.length) return '';
+  return '<div class="ways"><span class="ways-t">Other ways</span>' + ws.map(w => '<button type="button" class="btn small" data-act="way" data-way="' + w.id + '"' + (w.ask ? ' data-ask="' + w.ask + '"' : '') + '>' + esc(w.label) + '</button>').join('') + '<span class="way-ask" hidden></span></div>';
+}
+/* do the problem the chosen way, as a new card on top */
+function runWay(card, id, a, b) {
+  let p; try { p = wayParse(card.raw); } catch (e) { return; }
+  const expr = p.type === 'calculus' ? p.struct.expr : p.plain;
+  const v = (p.type === 'calculus' && p.struct.variable) || N.extractVars(expr)[0] || 'x';
+  const wrap = '(' + expr + ')';
+  if (p.type === 'equation' || p.type === 'inequality' || p.type === 'system') {
+    if (id === 'plot') { const s0 = p.statements[0]; const raw = 'plot ' + s0.lhs + ', ' + s0.rhs; addCard(raw, 'plot'); return; }
+    addCard(card.raw, id); return;
+  }
+  if (id === 'roots') { addCard(expr + ' = 0', 'solve'); return; }
+  if (id === 'limit') { addCard('lim_(' + v + '->' + a + ') ' + wrap, 'auto'); return; }
+  if (id === 'intdef') { addCard('∫_(' + a + ')^(' + b + ') ' + wrap + ' d' + v, 'auto'); return; }
+  addCard(expr, id);
+}
 function actionsHTML(card) {
   const r = card.res;
   let h = '';
@@ -3936,7 +4018,7 @@ function cardHTML(card) {
     if (r.checks.length) h += '<ul class="checks">' + r.checks.map(k => '<li class="' + (k.ok ? 'ok' : 'warn') + '"><span class="chk" aria-hidden="true">' + (k.ok ? '✓' : '!') + '</span>' + esc(k.text) + '</li>').join('') + '</ul>';
     if (r.warns.length) h += '<ul class="warns">' + r.warns.map(w => '<li>' + esc(w) + '</li>').join('') + '</ul>';
   }
-  h += '</div><footer class="card-f">' + actionsHTML(card) + '</footer>';
+  h += waysHTML(card) + '</div><footer class="card-f">' + actionsHTML(card) + '</footer>';
   return h;
 }
 function addCard(raw, mode, forced) {
@@ -4453,6 +4535,25 @@ $('#cards').addEventListener('click', e => {
     if (!mine) out.textContent = 'Type your answer first.';
     else if (mine === ans || (nums(mine) && nums(mine) === nums(ans) && /\d/.test(mine))) out.textContent = 'That matches. Nice work.';
     else out.textContent = 'That does not match what I got. It may still be the same answer written differently, so work through the steps and compare.';
+    return;
+  }
+  if (act === 'way') {
+    const ask = b.dataset.ask, box = el.querySelector('.way-ask');
+    if (!ask) { runWay(card, b.dataset.way); return; }
+    /* a limit needs where x goes; a definite integral needs its bounds */
+    const v = (() => { try { const p = wayParse(card.raw); return N.extractVars(p.type === 'calculus' ? p.struct.expr : p.plain)[0] || 'x'; } catch (x) { return 'x'; } })();
+    box.innerHTML = ask === 'point'
+      ? '<label>' + esc(v) + ' → <input class="way-a" size="6" value="0" aria-label="Value the variable approaches (∞, 2+ or 2- for one side)"></label> <button type="button" class="btn small primary" data-act="way-go" data-way="' + b.dataset.way + '">Find limit</button>'
+      : '<label>from <input class="way-a" size="5" value="0" aria-label="Lower bound"></label> <label>to <input class="way-b" size="5" value="1" aria-label="Upper bound"></label> <button type="button" class="btn small primary" data-act="way-go" data-way="' + b.dataset.way + '">Integrate</button>';
+    box.hidden = false;
+    box.querySelector('input').select();
+    return;
+  }
+  if (act === 'way-go') {
+    const val = s => String(s || '').trim().replace(/^\+?(?:∞|inf(?:inity)?)$/i, 'Infinity').replace(/^-\s*(?:∞|inf(?:inity)?)$/i, '-Infinity');
+    const a = val((el.querySelector('.way-a') || {}).value), bb = val((el.querySelector('.way-b') || {}).value);
+    if (!a || (el.querySelector('.way-b') && !bb)) return;
+    runWay(card, b.dataset.way, a, bb);
     return;
   }
   if (act === 'copy-tex') copy(card.res.copyTex, b);
