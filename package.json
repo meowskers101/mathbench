@@ -1,6 +1,6 @@
 {
   "name": "mathbench-desktop",
-  "version": "1.12.0",
+  "version": "1.13.0",
   "license": "Apache-2.0",
   "description": "Mathbench: equation solver and graphing calculator with a hotkey screen capture for math problems",
   "main": "main.js",
