@@ -21,7 +21,7 @@ Mathbench then lives in the system tray (bottom-right, near the clock). Right-cl
 - **Do it for me** (Ctrl + Alt + P): Mathbench finds the numbered problems on the page in front of you, solves them and types each answer into its box (in OneNote, beside the problem). Type what to do, such as "all", "do 3" or "1-4 as decimals".
   - **Words**: without words, less, with or more words.
   - **Work**: off, a few steps, some steps or all steps (every small step, with a check).
-
+  - STILL IN BETA!!!!
 ## Good to know
 
 - Check what Mathbench read before trusting an answer.
