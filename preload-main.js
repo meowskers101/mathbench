@@ -9,7 +9,7 @@ contextBridge.exposeInMainWorld('mbDesktop', {
   saveSettings: s => ipcRenderer.invoke('settings:save', s),
   onSolve: cb => ipcRenderer.on('desktop:solve', (_e, d) => cb(d)),
   solved: r => ipcRenderer.send('desktop:solved:' + r.id, r),
-  /* Mathbench AI, the word-problem reader: downloaded once, on request */
+  /* the Word Problem Reader plugin: downloaded once, on request */
   aiStatus: () => ipcRenderer.invoke('ai:status'),
   aiDownload: () => ipcRenderer.invoke('ai:download'),
   aiCancel: () => ipcRenderer.send('ai:cancel'),

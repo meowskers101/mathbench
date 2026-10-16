@@ -40,16 +40,16 @@ Problems are read on your computer by Formula AI, a maths recognition model that
 - Takes a screenshot only when you press a hotkey (or click Capture). Do it for me also moves the mouse to click answer boxes and types the answers, then puts the mouse back.
 - Saves settings in your user profile (`%APPDATA%\mathbench-desktop`).
 - "Save image" writes PNGs to Pictures\Mathbench captures.
-- Downloads Mathbench AI (about 1.8 GB, from Mathbench's GitHub releases) only when you click Download on a word problem.
+- Downloads the Word Problem Reader plugin (about 1.8 GB, from the Plugins release on GitHub) only when you click Download on a word problem.
 - It does not install services, change system settings, or start with Windows.
 
 ## Notes
 - Everything runs on the computer it is installed on, with no account, key or server: the solver, the formula reader and Do it for me all work offline. Only the page fonts are fetched from the internet when available (without them it falls back to system fonts).
 - Windows Win-key shortcuts (like Win + G, Game Bar's own) cannot be used as hotkeys by other apps.
 
-## Word problems: Mathbench AI
-Type a word problem ("Ben has $5 more than Carl. Together they have $45. How much does Carl have?") and press Solve. Mathbench AI reads it, writes the equation (x + x + 5 = 45, where x is Carl's money) and the solver finishes it. The card shows the equation it wrote, so you can check it matches the problem. In Do it for me, numbered word problems on a page are picked up too.
-- Mathbench AI is Qwen2.5 1.5B Instruct (Apache 2.0), a small language model run on your PC with Transformers.js, on the graphics card when it can (a few seconds per problem) and otherwise on the processor (slower).
+## Word problems: the Word Problem Reader plugin
+Type a word problem ("Ben has $5 more than Carl. Together they have $45. How much does Carl have?") and press Solve. The Word Problem Reader reads it, writes the equation (x + x + 5 = 45, where x is Carl's money) and the solver finishes it. The card shows the equation it wrote, so you can check it matches the problem. In Do it for me, numbered word problems on a page are picked up too. It is listed with any other extra plugins on the [Plugins release](https://github.com/meowskers101/mathbench/releases/tag/plugins).
+- The Word Problem Reader is Qwen2.5 1.5B Instruct (Apache 2.0), a small language model run on your PC with Transformers.js, on the graphics card when it can (a few seconds per problem) and otherwise on the processor (slower).
 - It is not in the installer. The first time you solve a word problem, Mathbench asks before downloading it once (about 1.8 GB, into `%APPDATA%\mathbench-desktop\ai`); after that it works offline. A cancelled or broken download carries on where it stopped, and every piece is checked before it is kept.
 - On 24 school word problems it wrote a correct equation for 21. Check the equation before trusting the answer.
 

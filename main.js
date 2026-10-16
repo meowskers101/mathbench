@@ -349,10 +349,11 @@ ipcMain.on('assist:place', async (_e, steps) => {
   else notify(steps.length === 1 ? 'Put ' + steps[0].text : 'Answered ' + steps.length + ' problems', steps.map(x => (x.label ? x.label + ': ' : '') + x.text).join('   '));
 });
 
-/* ---------- Mathbench AI: the word-problem reader (Qwen2.5 1.5B Instruct, Apache 2.0), downloaded once on request ---------- */
-/* the model's weights split into chunks the browser engine can load, published with Mathbench's releases; size and SHA-256 of each */
+/* ---------- plugins: the Word Problem Reader (Qwen2.5 1.5B Instruct, Apache 2.0), downloaded once on request ---------- */
+/* the model's weights split into chunks the browser engine can load, published in the Plugins release (each file named
+   word-problem-reader-…, so other plugins can sit beside it); size and SHA-256 of each */
 const AI_NAME = 'qwen';
-const AI_URL = 'https://github.com/meowskers101/mathbench/releases/download/ai-qwen2.5-1.5b-v1/';
+const AI_URL = 'https://github.com/meowskers101/mathbench/releases/download/plugins/word-problem-reader-';
 const AI_FILES = [
   ['LICENSE', 11343, '832dd9e00a68dd83b3c3fb9f5588dad7dcf337a0db50f7d9483f310cd292e92e'],
   ['config.json', 809, '215eb99c4955b0c42ea9f6e0980d922c228950c5dbc09bde6dc451fbba4d21f3'],

@@ -2986,10 +2986,10 @@ document.addEventListener('click', e => {
 async function solveForPaste(dataUrl, opts) {
   opts = opts || {};
   let tex = null;
-  /* a word problem on the page: Mathbench AI writes its equation from the words the text reader saw */
+  /* a word problem on the page: the Word Problem Reader writes its equation from the words the text reader saw */
   if (!opts.text && opts.wordProblem) {
     try { const w = await MathAI.read(opts.wordProblem); opts = Object.assign({}, opts, { text: w.expr }); }
-    catch (e) { return { ok: false, error: 'Mathbench AI could not turn that word problem into an equation. Type the equation in the directions box instead (solve …).' }; }
+    catch (e) { return { ok: false, error: 'The Word Problem Reader could not turn that word problem into an equation. Type the equation in the directions box instead (solve …).' }; }
   }
   if (opts.text) tex = String(opts.text);
   else {
@@ -4537,7 +4537,7 @@ $('#examples').addEventListener('click', e => {
 });
 
 /* ---------- go ---------- */
-/* a word problem: Mathbench AI writes the equation, the solver does the rest. A card at the top says what is happening
+/* a word problem: the Word Problem Reader writes the equation, the solver does the rest. A card at the top says what is happening
    (asking first before the one-time download) and is replaced by the answer */
 async function wordProblem(raw) {
   const status = await MathAI.status();
@@ -4552,29 +4552,29 @@ async function wordProblem(raw) {
   try {
     if (!status.ready) {
       const go = await new Promise(res => {
-        show(esc(raw) + '<br><br><b>Mathbench AI</b> can read word problems and write the equation for you. It needs a one-time download of about ' +
+        show(esc(raw) + '<br><br>The <b>Word Problem Reader</b> plugin can read word problems and write the equation for you. It needs a one-time download of about ' +
           (status.total / 1073741824).toFixed(1) + ' GB' + (status.have ? ' (' + mb(status.have) + ' already done)' : '') + ', then it works offline. ' +
-          '<br><br><button type="button" class="btn small primary" data-ai="yes">Download Mathbench AI</button> <button type="button" class="btn small" data-ai="no">Not now</button>');
+          '<br><br><button type="button" class="btn small primary" data-ai="yes">Download the Word Problem Reader</button> <button type="button" class="btn small" data-ai="no">Not now</button>');
         el.addEventListener('click', e => { const b = e.target.closest('[data-ai]'); if (b) res(b.dataset.ai === 'yes'); });
       });
       if (!go) { el.remove(); addCard(raw, 'auto'); return; }
       if (!wordProblem.listening) { wordProblem.listening = true; window.mbDesktop.onAiProgress(p => { if (wordProblem.onProgress) wordProblem.onProgress(p); }); }
-      wordProblem.onProgress = (p => { if (el.isConnected) show('Downloading Mathbench AI… ' + Math.floor(100 * p.have / p.total) + '% (' + mb(p.have) + ' of ' + mb(p.total) + ') <button type="button" class="btn small" data-ai="stop">Cancel</button>'); });
+      wordProblem.onProgress = (p => { if (el.isConnected) show('Downloading the Word Problem Reader… ' + Math.floor(100 * p.have / p.total) + '% (' + mb(p.have) + ' of ' + mb(p.total) + ') <button type="button" class="btn small" data-ai="stop">Cancel</button>'); });
       el.addEventListener('click', e => { if (e.target.closest('[data-ai="stop"]')) window.mbDesktop.aiCancel(); });
       const d = await window.mbDesktop.aiDownload();
       if (!d.ready) throw uerr(d.error === 'cancelled' ? 'Download cancelled. Press Solve again to carry on where it stopped.' : 'The download did not finish: ' + (d.error || 'unknown error') + '. Press Solve to try again; it carries on where it stopped.');
     }
-    show('Mathbench AI is reading the problem…');
+    show('The Word Problem Reader is reading the problem…');
     const t0 = performance.now();
-    const r = await MathAI.read(raw, () => show('Starting Mathbench AI (first time after opening takes a few seconds)…'));
+    const r = await MathAI.read(raw, () => show('Starting the Word Problem Reader (the first time after opening takes a few seconds)…'));
     const secs = ((performance.now() - t0) / 1000).toFixed(1);
     el.remove();
     addCard(r.expr, 'auto', () => {
       const res = run(r.expr, 'auto');
-      res.notes = [{ text: 'Word problem: ' + raw.replace(/\s+/g, ' ').trim() }, { text: 'Mathbench AI wrote it as ' + r.expr + (r.meaning.length ? ', where ' + r.meaning.map(m => m.replace(/\s*:\s*/, ' is ')).join(' and ') : '') + '. Check that this matches the problem.' }]
+      res.notes = [{ text: 'Word problem: ' + raw.replace(/\s+/g, ' ').trim() }, { text: 'The Word Problem Reader wrote it as ' + r.expr + (r.meaning.length ? ', where ' + r.meaning.map(m => m.replace(/\s*:\s*/, ' is ')).join(' and ') : '') + '. Check that this matches the problem.' }]
         .concat(res.notes || []);
       res.modeLabel = 'Word problem';
-      res.warns = (res.warns || []).concat(MathAI.device() === 'cpu' ? ['Mathbench AI ran on the processor (no graphics card it could use), so it took ' + secs + ' s.'] : []);
+      res.warns = (res.warns || []).concat(MathAI.device() === 'cpu' ? ['The Word Problem Reader ran on the processor (no graphics card it could use), so it took ' + secs + ' s.'] : []);
       return res;
     });
   } catch (e) {
@@ -5623,7 +5623,7 @@ self.onmessage = async (e) => {
   return { read: read, prefetch: () => { load().catch(() => { /* the reader falls back later */ }); }, loaded: () => pct === 100, progress: () => pct, sizeMB: Math.round(TOTAL / 1048576) };
 })();
 
-/* ---------- Mathbench AI: reads a word problem and writes the equation behind it ----------
+/* ---------- the Word Problem Reader: reads a word problem and writes the equation behind it ----------
    Qwen2.5 1.5B Instruct (Apache 2.0), run with Transformers.js (Apache 2.0) in a worker, on the graphics card when it can.
    The weights are downloaded once on request (about 1.8 GB) into the user profile; then it works offline like the rest of Mathbench. */
 const MathAI = (function () {
@@ -5703,7 +5703,7 @@ const MathAI = (function () {
       last = line;
       msgs.push({ role: 'assistant', content: a }, { role: 'user', content: why + ' Reply again with the two lines only.' });
     }
-    throw uerr('Mathbench AI could not turn this into an equation it can solve' + (last ? ' (it wrote ' + last + ')' : '') + '.', 'Try writing the equation yourself, or reword the problem.');
+    throw uerr('The Word Problem Reader could not turn this into an equation it can solve' + (last ? ' (it wrote ' + last + ')' : '') + '.', 'Try writing the equation yourself, or reword the problem.');
   }
   return { read: read, log: () => read.log, load: load, device: () => device, status: async () => (D() && D().aiStatus ? Object.assign({ available: true }, await D().aiStatus()) : { available: /[?&]bench=1\b/.test(location.search), ready: true }) };
 })();

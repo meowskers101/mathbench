@@ -14,8 +14,8 @@ Fine-tuning data:
   No fonts are shipped with Mathbench.
 No data under a non-commercial licence (such as Google's MathWriting) was used to train this model.
 
-Mathbench AI (the word-problem reader, downloaded on request)
--------------------------------------------------------------
+Word Problem Reader plugin (downloaded on request)
+--------------------------------------------------
 - Qwen2.5-1.5B-Instruct (Alibaba Cloud, Qwen team) - Apache License 2.0. Mathbench uses the 4-bit ONNX export from
   onnx-community/Qwen2.5-1.5B-Instruct, re-saved with its weights split into pieces so a browser engine can load it.
   The model licence is also downloaded with the model.

@@ -1,4 +1,4 @@
-/* Mathbench AI worker: runs the word-problem reader (Qwen2.5 1.5B Instruct, Apache 2.0) with Transformers.js (Apache 2.0),
+/* Word Problem Reader worker: runs the word-problem reader (Qwen2.5 1.5B Instruct, Apache 2.0) with Transformers.js (Apache 2.0),
    on the graphics card (WebGPU) when there is one, otherwise on the processor. Everything stays on this computer. */
 let gen = null, device = null;
 self.onmessage = async e => {

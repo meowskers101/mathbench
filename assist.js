@@ -249,7 +249,7 @@ function analyse(page) {
   /* problems: lines that start with a number marker; a problem runs down its own column until the next number there */
   let marks = [];
   /* a numbered line of ordinary words ("1. Read chapter 3 before Friday") is a to-do list in notes, not a problem */
-  /* with Mathbench AI installed, a numbered item of words can be a word problem (kept below only if it reads like one) */
+  /* with the Word Problem Reader installed, a numbered item of words can be a word problem (kept below only if it reads like one) */
   lines.forEach((l, i) => { const m = markerOf(l.words); if (m && (!isProse(l.t) || page.ai)) marks.push({ line: i, n: m.n, words: m.words, x: l.words[0].r.x, y: l.r.y }); });
   /* columns of numbers (worksheets often have two): numbers whose left edges line up */
   const columnsOf = ms => {
@@ -504,7 +504,7 @@ function analyse(page) {
   for (let i = problems.length - 1; i >= 0; i--) {
     const p = problems[i];
     if (p.hasMath !== false) continue;
-    /* a word problem for Mathbench AI: words with numbers in them that ask for something */
+    /* a word problem for the Word Problem Reader: words with numbers in them that ask for something */
     /* its words run down to the next number in its column (evenly spaced lines can put the question past its zone) */
     const next = problems.filter(q => q !== p && q.col === p.col && q.y > p.y + 0.5 * lh).sort((q, r) => q.y - r.y)[0];
     const text = p.line ? lines.filter(l => l.r.y >= p.line.r.y - 0.3 * lh && (!next || l.r.y < next.y - 0.3 * lh) && l.r.x >= p.zoneLeft - 2 && l.r.x < p.zoneRight)
