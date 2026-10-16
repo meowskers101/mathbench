@@ -11,3 +11,6 @@ _backup-before-formula-ai/
 npm-debug.log*
 .DS_Store
 Thumbs.db
+
+# local editor and assistant settings
+.claude/
