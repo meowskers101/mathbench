@@ -4559,7 +4559,7 @@ async function wordProblem(raw) {
       });
       if (!go) { el.remove(); addCard(raw, 'auto'); return; }
       if (!wordProblem.listening) { wordProblem.listening = true; window.mbDesktop.onAiProgress(p => { if (wordProblem.onProgress) wordProblem.onProgress(p); }); }
-      wordProblem.onProgress = (p => { if (el.isConnected) show('Downloading the Word Problem Reader… ' + Math.floor(100 * p.have / p.total) + '% (' + mb(p.have) + ' of ' + mb(p.total) + ') <button type="button" class="btn small" data-ai="stop">Cancel</button>'); });
+      wordProblem.onProgress = (p => { if (!el.isConnected) return; if (p.phase === 'check') { show('Checking the download…'); return; } if (p.phase === 'install') { show('Installing the Word Problem Reader…'); return; } show('Downloading the Word Problem Reader… ' + Math.floor(100 * p.have / p.total) + '% (' + mb(p.have) + ' of ' + mb(p.total) + ') <button type="button" class="btn small" data-ai="stop">Cancel</button>'); });
       el.addEventListener('click', e => { if (e.target.closest('[data-ai="stop"]')) window.mbDesktop.aiCancel(); });
       const d = await window.mbDesktop.aiDownload();
       if (!d.ready) throw uerr(d.error === 'cancelled' ? 'Download cancelled. Press Solve again to carry on where it stopped.' : 'The download did not finish: ' + (d.error || 'unknown error') + '. Press Solve to try again; it carries on where it stopped.');

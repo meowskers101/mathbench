@@ -350,10 +350,10 @@ ipcMain.on('assist:place', async (_e, steps) => {
 });
 
 /* ---------- plugins: the Word Problem Reader (Qwen2.5 1.5B Instruct, Apache 2.0), downloaded once on request ---------- */
-/* the model's weights split into chunks the browser engine can load, published in the Plugins release (each file named
-   word-problem-reader-…, so other plugins can sit beside it); size and SHA-256 of each */
+/* the model's weights split into chunks the browser engine can load; size and SHA-256 of each, checked once installed */
 const AI_NAME = 'qwen';
-const AI_URL = 'https://github.com/meowskers101/mathbench/releases/download/plugins/word-problem-reader-';
+/* they come as one installer, the only file for this plugin in the Plugins release: its size and SHA-256 */
+const AI_SETUP = ['https://github.com/meowskers101/mathbench/releases/download/plugins/Mathbench.Word.Problem.Reader.Setup.exe', 1795196373, '720363f771c57b909107d08a889caaec0c60570e4f997c60181bee75afaad5fd'];
 const AI_FILES = [
   ['LICENSE', 11343, '832dd9e00a68dd83b3c3fb9f5588dad7dcf337a0db50f7d9483f310cd292e92e'],
   ['config.json', 809, '215eb99c4955b0c42ea9f6e0980d922c228950c5dbc09bde6dc451fbba4d21f3'],
@@ -381,43 +381,55 @@ async function serveModel(rel) {
   } catch (e) { return new Response('Not found', { status: 404 }); }
 }
 let aiJob = null;
-/* download every missing piece, resuming a part file, each checked against its SHA-256 before it is kept */
+/* download the plugin's installer (resuming a part file), check its SHA-256, run it silently into the user profile,
+   then check that every model file is there with its size. The installer is deleted afterwards */
 async function aiDownload(send) {
   if (aiJob) return aiJob.promise;
   const crypto = require('crypto');
   const ctl = new AbortController();
   aiJob = { ctl: ctl };
   aiJob.promise = (async () => {
-    let done = aiHave();
-    const tell = () => send({ have: done, total: AI_TOTAL });
-    tell();
-    for (const [name, size, sha] of AI_FILES) {
-      const dest = aiPath(name), part = dest + '.part';
-      try { if (fs.statSync(dest).size === size) continue; } catch (e) { /* not there yet */ }
-      fs.mkdirSync(path.dirname(dest), { recursive: true });
+    if (aiHave() === AI_TOTAL) return { ready: true };
+    const [url, size, sha] = AI_SETUP;
+    const dir = path.join(app.getPath('userData'), 'ai');
+    const exe = path.join(dir, 'word-problem-reader-setup.exe'), part = exe + '.part';
+    fs.mkdirSync(dir, { recursive: true });
+    let have = 0;
+    const tell = phase => send({ have: have, total: size, phase: phase || 'download' });
+    let ready = false;
+    try { ready = fs.statSync(exe).size === size; } catch (e) { ready = false; }
+    if (!ready) {
       let from = 0; try { from = fs.statSync(part).size; } catch (e) { from = 0; }
       if (from >= size) { try { fs.unlinkSync(part); } catch (e) { /* ignore */ } from = 0; }
-      const res = await net.fetch(AI_URL + name.replace(/^onnx\//, ''), { headers: from ? { Range: 'bytes=' + from + '-' } : {}, signal: ctl.signal });
+      const res = await net.fetch(url, { headers: from ? { Range: 'bytes=' + from + '-' } : {}, signal: ctl.signal });
       if (!res.ok) throw new Error('download ' + res.status);
       if (from && res.status !== 206) from = 0;   /* the server sent the whole file again */
       const out = fs.createWriteStream(part, { flags: from ? 'a' : 'w' });
-      done += from;
+      have = from; tell();
       const rd = res.body.getReader();
       for (;;) {
         const r = await rd.read();
         if (r.done) break;
         if (!out.write(Buffer.from(r.value))) await new Promise(ok => out.once('drain', ok));
-        done += r.value.length; tell();
+        have += r.value.length; tell();
       }
       await new Promise((ok, bad) => out.end(err => (err ? bad(err) : ok())));
-      /* check the whole piece */
+      tell('check');
       const h = crypto.createHash('sha256');
       await new Promise((ok, bad) => fs.createReadStream(part).on('data', d => h.update(d)).on('end', ok).on('error', bad));
-      if (h.digest('hex') !== sha) { fs.unlinkSync(part); throw new Error('A downloaded piece was damaged (' + name + '). Try again.'); }
-      fs.renameSync(part, dest);
+      if (h.digest('hex') !== sha) { fs.unlinkSync(part); throw new Error('The download was damaged. Try again.'); }
+      fs.renameSync(part, exe);
     }
-    done = aiHave(); tell();
-    return { ready: done === AI_TOTAL };
+    /* install: silently, into the folder Mathbench reads the model from (/D must come last and is taken as it is, spaces and all) */
+    have = size; tell('install');
+    const code = await new Promise(ok => {
+      const p = spawn(exe, ['/S', '/D=' + aiDir()], { windowsHide: true, windowsVerbatimArguments: true });
+      p.on('error', () => ok(-1)); p.on('exit', c => ok(c));
+    });
+    if (code !== 0) throw new Error('The Word Problem Reader installer did not finish (code ' + code + '). Try again.');
+    try { fs.unlinkSync(exe); } catch (e) { /* ignore */ }
+    if (aiHave() !== AI_TOTAL) throw new Error('The Word Problem Reader did not install completely. Try again.');
+    return { ready: true };
   })();
   try { return await aiJob.promise; } finally { aiJob = null; }
 }
