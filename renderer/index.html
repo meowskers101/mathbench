@@ -158,6 +158,9 @@ details.ref summary { cursor: pointer; font-weight: 600; }
 .card-raw { font: 400 13px var(--font-mono); color: var(--muted); overflow-wrap: anywhere; min-width: 0; }
 .card-b { padding: 14px; display: grid; gap: 12px; min-width: 0; }
 .card-f { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 14px; border-top: 1px solid var(--line); }
+.pic-opt { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); cursor: pointer; }
+.pic-opt input { margin: 0; }
+#cap-msg .btn { margin-left: 6px; }
 .ways { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--line); }
 .ways-t { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); margin-right: 4px; }
 .way-ask { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%; margin-top: 4px; font-size: 14px; }
@@ -409,6 +412,7 @@ canvas.plot { width: 100%; display: block; border: 1px solid var(--line); border
       <button type="button" class="btn small" id="pic-auto" aria-expanded="false" aria-controls="auto-note" title="Reads the whole screen, solves each problem and types the answers into their boxes">Do it for me<span class="app-tag" id="auto-tag">App</span></button>
       <input type="file" id="pic-cam-input" accept="image/*" capture="environment" hidden>
       <input type="file" id="pic-input" accept="image/*" hidden>
+      <label class="pic-opt" id="pic-words-opt" hidden title="Reads the words in a capture too. A word problem goes to the Word Problem Reader instead of being read as maths."><input type="checkbox" id="pic-words" checked> Detect word problems</label>
       <span class="hint">Or snip with Win + Shift + S and paste here with Ctrl + V.</span>
     </div>
     <div class="auto-note" id="auto-note" hidden>
@@ -5837,30 +5841,65 @@ function fillBox(text, note, thumb) {
   showCap(thumb, note);
   expr.focus();
 }
+/* word problems in pictures: Windows' text reader reads the words (desktop app only); the option is remembered */
+const wordPics = () => !!(window.mbDesktop && window.mbDesktop.ocrImage) && store('mb-wordpics') !== false;
+async function pictureWords(canvas) {
+  try { const r = await window.mbDesktop.ocrImage(canvas.toDataURL('image/png')); return (r && r.lines || []).join(' ').replace(/\s+/g, ' ').trim(); } catch (e) { return ''; }
+}
+/* the caption under a picture, with a button to read it the other way */
+function showCapSwitch(img, msg, label, way) {
+  showCap(img, msg);
+  if (label) $('#cap-msg').insertAdjacentHTML('beforeend', ' <button type="button" class="btn small" data-cap="' + way + '">' + esc(label) + '</button>');
+}
 async function readPicture(canvas, _unused, opts) {
-  const photo = !!(opts && opts.photo);
+  opts = opts || {};
+  const photo = !!opts.photo;
   const thumb = thumbOf(canvas);
+  readPicture.last = { canvas: canvas, opts: opts };
   gcSetView('solver');
   showCap(thumb, 'Reading…');
   await new Promise(r => setTimeout(r, 30));
+  /* a word problem: its sentence goes in the box, and Solve hands it to the Word Problem Reader */
+  let words = opts.words != null ? opts.words : '';
+  if (opts.as !== 'math' && (opts.as === 'words' || wordPics())) {
+    if (!words) { showCap(thumb, 'Reading the words…'); words = await pictureWords(canvas); }
+    readPicture.last.opts = Object.assign({}, opts, { words: words });
+    if (words && (opts.as === 'words' || looksLikeWordProblem(words))) {
+      boxBackend = null;
+      expr.value = words;
+      updatePreview();
+      showCapSwitch(thumb, 'This looks like a word problem. Check the words match the picture, then press Solve: the Word Problem Reader writes the equation.', 'Read it as maths instead', 'math');
+      expr.focus();
+      return;
+    }
+  }
   try {
     const r = await FormulaAI.read(canvas, {
       photo: photo,
       onProgress: p => showCap(thumb, p < 100 ? 'Loading the formula reader (first time only)… ' + p + '%' : 'Starting the formula reader…'),
       onReading: () => showCap(thumb, 'Reading the formula…')
     });
+    /* the words were read too: if there are sentences in it, it may still be a word problem */
+    const sw = window.mbDesktop && window.mbDesktop.ocrImage ? ['Read it as a word problem instead', 'words'] : [null, null];
     if (r && r.tex) {
       fillBox(r.tex, r.minP < 0.45
         ? 'Some symbols were hard to make out. Check it matches the picture and fix anything wrong, then press Solve.'
         : 'Check it matches the picture, then press Solve.', thumb);
+      if (sw[0]) showCapSwitch(thumb, $('#cap-msg').textContent, sw[0], sw[1]);
       return;
     }
-    showCap(thumb, 'No formula was found here. Try selecting just the problem, or type it below.');
+    showCapSwitch(thumb, 'No formula was found here. Try selecting just the problem, or type it below.', sw[0], sw[1]);
   } catch (e) {
     showCap(thumb, 'The formula reader could not start here. Type the problem below.');
   }
   expr.focus();
 }
+/* the switch on the caption: read the same picture the other way */
+document.addEventListener('click', e => {
+  const b = e.target.closest('#cap-msg [data-cap]');
+  if (!b || !readPicture.last) return;
+  readPicture(readPicture.last.canvas, undefined, Object.assign({}, readPicture.last.opts, { as: b.dataset.cap }));
+});
 
 /* ----- crop screen: choose part of a picture ----- */
 function openCropper(src, title, photo) {
@@ -6038,6 +6077,8 @@ if (/[?&]bench=1\b/.test(location.search)) {
   window.__mbTidy = tidyModelTex;
   window.__mbAI = MathAI;
   window.__mbWords = looksLikeWordProblem;
+  window.__mbReadPicture = readPicture;
+  window.__mbStore = store;
   window.__mbFill = t => { fillBox(t, '', null); return document.querySelector('#expr').value; };
   window.__mbReadPic = async url => { const im = new Image(); im.src = url; await im.decode(); const c = document.createElement('canvas'); c.width = im.naturalWidth; c.height = im.naturalHeight; c.getContext('2d').drawImage(im, 0, 0); const r = await FormulaAI.read(c, {}); return r ? r.tex : null; };
   window.__mbReadAt = async (url, k) => { const im = new Image(); im.src = url; await im.decode(); const c = document.createElement('canvas'); c.width = im.naturalWidth * k; c.height = im.naturalHeight * k; const g = c.getContext('2d'); g.imageSmoothingQuality = 'high'; g.drawImage(im, 0, 0, c.width, c.height); const r = await FormulaAI.read(c, { photo: false }); return r ? r.tex + ' ' + (r.meanP || 0).toFixed(2) : null; };
@@ -6059,6 +6100,12 @@ if (/[?&]bench=1\b/.test(location.search)) {
   $('#pic-cap').title = 'Opens the Mathbench overlay: drag across the problem on any window';
   $('#pic-cam').hidden = true;
   $('#desk-set').addEventListener('click', () => D.openSettings());
+  if (D.ocrImage) {
+    const opt = $('#pic-words-opt'), box = $('#pic-words');
+    opt.hidden = false;
+    box.checked = store('mb-wordpics') !== false;
+    box.addEventListener('change', () => store('mb-wordpics', box.checked));
+  }
   if (D.onSolve) D.onSolve(async req => {
     let out;
     try { out = await solveForPaste(req.image, req.opts); } catch (e) { out = { ok: false, error: 'Mathbench could not read that selection.' }; }

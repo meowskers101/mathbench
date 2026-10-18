@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld('mbDesktop', {
   solved: r => ipcRenderer.send('desktop:solved:' + r.id, r),
   /* the Word Problem Reader plugin: downloaded once, on request */
   aiStatus: () => ipcRenderer.invoke('ai:status'),
+  /* the words in a picture (Windows' text reader), for spotting word problems in a capture */
+  ocrImage: dataUrl => ipcRenderer.invoke('ocr:image', dataUrl),
   aiDownload: () => ipcRenderer.invoke('ai:download'),
   aiCancel: () => ipcRenderer.send('ai:cancel'),
   onAiProgress: cb => ipcRenderer.on('ai:progress', (_e, p) => cb(p))

@@ -433,6 +433,21 @@ async function aiDownload(send) {
   })();
   try { return await aiJob.promise; } finally { aiJob = null; }
 }
+/* the words in a captured picture, read by Windows' text reader (it reads printed sentences well, a word problem for one).
+   Small pictures are enlarged 2x first, as for Do it for me */
+ipcMain.handle('ocr:image', async (_e, dataUrl) => {
+  try {
+    let img = nativeImage.createFromDataURL(String(dataUrl || ''));
+    if (img.isEmpty()) return { lines: [] };
+    const sz = img.getSize();
+    if (sz.width < 1600 && sz.height < 1600) img = img.resize({ width: sz.width * 2, height: sz.height * 2, quality: 'best' });
+    const file = path.join(os.tmpdir(), 'mathbench-words-' + process.pid + '.png');
+    fs.writeFileSync(file, img.toPNG());
+    const t = await helperCall('ocr', { path: file }, 20000);
+    try { fs.unlinkSync(file); } catch (e) { /* ignore */ }
+    return { lines: (t.lines || []).map(l => String(l.t || '')).filter(Boolean) };
+  } catch (e) { return { lines: [] }; }
+});
 ipcMain.handle('ai:status', () => ({ have: aiHave(), total: AI_TOTAL, ready: aiHave() === AI_TOTAL, downloading: !!aiJob }));
 ipcMain.handle('ai:download', async e => {
   const wc = e.sender;
