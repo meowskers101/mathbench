@@ -5871,6 +5871,12 @@ async function readPicture(canvas, _unused, opts) {
       boxBackend = null;
       expr.value = words;
       updatePreview();
+      /* asked for as a word problem (the overlay's Word problem mode, or the switch): solve it straight away */
+      if (opts.as === 'words') {
+        showCapSwitch(thumb, 'Read as a word problem. The Word Problem Reader is writing the equation below; check it matches the picture.', 'Read it as maths instead', 'math');
+        wordProblem(words);
+        return;
+      }
       showCapSwitch(thumb, 'This looks like a word problem. Check the words match the picture, then press Solve: the Word Problem Reader writes the equation.', 'Read it as maths instead', 'math');
       expr.focus();
       return;
