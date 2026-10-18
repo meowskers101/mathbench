@@ -11,6 +11,11 @@ contextBridge.exposeInMainWorld('mbOverlay', {
   scan: () => ipcRenderer.invoke('assist:scan'),
   solve: task => ipcRenderer.invoke('assist:solve', task),
   place: steps => ipcRenderer.send('assist:place', steps),
+  /* for the Solver widget inside the overlay: the words in a picture, and the Word Problem Reader plugin */
   aiStatus: () => ipcRenderer.invoke('ai:status'),
+  aiDownload: () => ipcRenderer.invoke('ai:download'),
+  aiCancel: () => ipcRenderer.send('ai:cancel'),
+  onAiProgress: cb => ipcRenderer.on('ai:progress', (_e, p) => cb(p)),
+  ocrImage: dataUrl => ipcRenderer.invoke('ocr:image', dataUrl),
   openSettings: () => { ipcRenderer.send('overlay:cancel'); ipcRenderer.send('settings:open'); }
 });

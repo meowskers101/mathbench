@@ -13,9 +13,10 @@ Get the Windows installer, **Mathbench Setup.exe**, from the [Releases page](htt
 
 ## Use it
 - Hotkey: Ctrl + Alt + M (change it in Settings, from the tray icon).
-- The screen dims and a white and blue bar appears at the top: Math problem, Copy image, Save image, whole screen, settings.
-- Pick a mode (or press 1, 2, 3), then drag across the area. Esc or right-click cancels. Enter captures the whole screen.
-- Math problem: the crop is read on your computer, then solved in Mathbench. Check what was read before trusting the answer.
+- The screen dims and a white and blue bar appears at the top: Math problem, Word problem, Copy image, Save image, Solve & paste, whole screen, settings.
+- Pick a mode (or press 1 to 5), then drag across the area. It opens in the mode you used last. Esc or right-click cancels. Enter captures the whole screen.
+- Math problem: the crop is read as maths on your computer (Formula AI), then solved in Mathbench. Check what was read before trusting the answer.
+- Word problem: the words in the crop are read, and the Word Problem Reader writes the equation when you press Solve. Each capture also has a button to read it the other way.
 
 ## Do it for me (Ctrl + Alt + P)
 - Press it on a page with problems. Mathbench numbers the problems it finds and outlines the answer boxes.

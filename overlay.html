@@ -133,9 +133,10 @@
   <div id="size"></div>
   <div id="capbar">
     <button class="tb" data-mode="math" aria-pressed="true"><svg viewBox="0 0 24 24"><path d="M12 4v8M8 8h8M8 19h8"/></svg><span class="t">Math problem</span><kbd>1</kbd></button>
-    <button class="tb" data-mode="copy" aria-pressed="false"><svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg><span class="t">Copy image</span><kbd>2</kbd></button>
-    <button class="tb" data-mode="save" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg><span class="t">Save image</span><kbd>3</kbd></button>
-    <button class="tb" data-mode="paste" aria-pressed="false" title="Solve it and paste the answer where you were typing"><svg viewBox="0 0 24 24"><rect x="6" y="4" width="12" height="16" rx="2"/><path d="M9 4.5h6M9 11h6M9 15h4"/></svg><span class="t">Solve &amp; paste</span><kbd>4</kbd></button>
+    <button class="tb" data-mode="word" aria-pressed="false" title="Read the words and let the Word Problem Reader write the equation"><svg viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="16" rx="2"/><path d="M8 9h8M8 13h8M8 17h5"/></svg><span class="t">Word problem</span><kbd>2</kbd></button>
+    <button class="tb" data-mode="copy" aria-pressed="false"><svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg><span class="t">Copy image</span><kbd>3</kbd></button>
+    <button class="tb" data-mode="save" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg><span class="t">Save image</span><kbd>4</kbd></button>
+    <button class="tb" data-mode="paste" aria-pressed="false" title="Solve it and paste the answer where you were typing"><svg viewBox="0 0 24 24"><rect x="6" y="4" width="12" height="16" rx="2"/><path d="M9 4.5h6M9 11h6M9 15h4"/></svg><span class="t">Solve &amp; paste</span><kbd>5</kbd></button>
     <div class="sep"></div>
     <button class="tb" id="c-full"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="12" rx="2"/><path d="M9 21h6"/></svg><span class="t">Whole screen</span></button>
     <button class="ib" id="c-x" title="Cancel (Esc)" aria-label="Cancel capture"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
@@ -247,6 +248,15 @@
   function closeWidget(id) { if (!open[id]) return; savePos(id); open[id].el.remove(); delete open[id]; $('#b-' + id).setAttribute('aria-pressed', 'false'); }
   function toggleWidget(id) { if (open[id]) closeWidget(id); else openWidget(id); }
   function send(id, msg) { const w = openWidget(id); if (w.ready) w.frame.contentWindow.postMessage(msg, '*'); else w.queue.push(msg); }
+  const RPC = ['ocrImage', 'aiStatus', 'aiDownload', 'aiCancel'];
+  window.addEventListener('message', async e => {
+    const d = e.data, w = Object.values(open).find(x => x.frame && x.frame.contentWindow === e.source);
+    if (!w || !d || d.mb !== 1 || d.type !== 'rpc' || !RPC.includes(d.fn) || !window.mbOverlay[d.fn]) return;
+    let value = null, ok = true;
+    try { value = await window.mbOverlay[d.fn].apply(null, d.args || []); } catch (err) { ok = false; value = String(err && err.message || err); }
+    try { e.source.postMessage({ mb: 1, type: 'rpc-ret', id: d.id, ok: ok, value: value }, '*'); } catch (err) { /* the widget closed */ }
+  });
+  if (window.mbOverlay.onAiProgress) window.mbOverlay.onAiProgress(p => Object.values(open).forEach(w => { try { if (w.ready) w.frame.contentWindow.postMessage({ mb: 1, type: 'ai-progress', p: p }, '*'); } catch (err) { /* ignore */ } }));
   $('#b-solver').addEventListener('click', () => toggleWidget('solver'));
   $('#b-graph').addEventListener('click', () => toggleWidget('graph'));
 
@@ -269,6 +279,7 @@
     document.querySelectorAll('#capbar [data-mode]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.mode === m)));
     if (remember) window.mbOverlay.setMode(m);
   }
+  setMode(mode);   /* the buttons show the mode it opened in (the last one used) */
   function startCapture() { busy = false; start = null; rect = null; sel.style.display = 'none'; size.style.display = 'none'; $('#dim').style.display = 'block'; $('#caphint').style.display = ''; cap.classList.add('on'); setMode(mode, false); }
   function endCapture() { cap.classList.remove('on'); }
   function toast(t) { const el = $('#toast'); el.textContent = t; el.style.display = 'block'; clearTimeout(toast.t); toast.t = setTimeout(() => { el.style.display = 'none'; }, 2200); }
@@ -288,7 +299,8 @@
     if (mode === 'copy') { window.mbOverlay.copyImage(data); toast('Copied to the clipboard'); }
     else if (mode === 'save') { window.mbOverlay.saveImage(data); toast('Saved to Pictures / Mathbench captures'); }
     else if (mode === 'paste') { window.mbOverlay.solvePaste(data); }   /* the overlay closes; the answer is pasted where you were typing */
-    else { send('solver', { mb: 1, type: 'image', data: data }); toast('Reading the problem…'); }
+    else if (mode === 'word') { send('solver', { mb: 1, type: 'image', data: data, as: 'words' }); toast('Reading the word problem…'); }
+    else { send('solver', { mb: 1, type: 'image', data: data, as: 'math' }); toast('Reading the problem…'); }
   }
   function draw(e) {
     const x0 = Math.min(start.x, e.clientX), y0 = Math.min(start.y, e.clientY), w = Math.abs(e.clientX - start.x), h = Math.abs(e.clientY - start.y);
@@ -319,7 +331,7 @@
     if (e.key === 'Escape') { if (cap.classList.contains('on')) endCapture(); else window.mbOverlay.cancel(); }
     else if (info.assist) { /* typing goes to the directions box */ }
     else if (cap.classList.contains('on')) {
-      if (e.key === '1') setMode('math', true); else if (e.key === '2') setMode('copy', true); else if (e.key === '3') setMode('save', true); else if (e.key === '4') setMode('paste', true); else if (e.key === 'Enter') finish(null);
+      if (e.key === '1') setMode('math', true); else if (e.key === '2') setMode('word', true); else if (e.key === '3') setMode('copy', true); else if (e.key === '4') setMode('save', true); else if (e.key === '5') setMode('paste', true); else if (e.key === 'Enter') finish(null);
     } else if (!inField && !e.ctrlKey && !e.altKey && !e.metaKey) {
       const k = e.key.toLowerCase();
       if (k === 'c') startCapture(); else if (k === 's') toggleWidget('solver'); else if (k === 'g') toggleWidget('graph');

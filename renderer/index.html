@@ -4562,10 +4562,10 @@ async function wordProblem(raw) {
         el.addEventListener('click', e => { const b = e.target.closest('[data-ai]'); if (b) res(b.dataset.ai === 'yes'); });
       });
       if (!go) { el.remove(); addCard(raw, 'auto'); return; }
-      if (!wordProblem.listening) { wordProblem.listening = true; window.mbDesktop.onAiProgress(p => { if (wordProblem.onProgress) wordProblem.onProgress(p); }); }
+      if (!wordProblem.listening) { wordProblem.listening = true; PL().onAiProgress(p => { if (wordProblem.onProgress) wordProblem.onProgress(p); }); }
       wordProblem.onProgress = (p => { if (!el.isConnected) return; if (p.phase === 'check') { show('Checking the download…'); return; } if (p.phase === 'install') { show('Installing the Word Problem Reader…'); return; } show('Downloading the Word Problem Reader… ' + Math.floor(100 * p.have / p.total) + '% (' + mb(p.have) + ' of ' + mb(p.total) + ') <button type="button" class="btn small" data-ai="stop">Cancel</button>'); });
-      el.addEventListener('click', e => { if (e.target.closest('[data-ai="stop"]')) window.mbDesktop.aiCancel(); });
-      const d = await window.mbDesktop.aiDownload();
+      el.addEventListener('click', e => { if (e.target.closest('[data-ai="stop"]')) PL().aiCancel(); });
+      const d = await PL().aiDownload();
       if (!d.ready) throw uerr(d.error === 'cancelled' ? 'Download cancelled. Press Solve again to carry on where it stopped.' : 'The download did not finish: ' + (d.error || 'unknown error') + '. Press Solve to try again; it carries on where it stopped.');
     }
     show('The Word Problem Reader is reading the problem…');
@@ -5630,9 +5630,12 @@ self.onmessage = async (e) => {
 /* ---------- the Word Problem Reader: reads a word problem and writes the equation behind it ----------
    Qwen2.5 1.5B Instruct (Apache 2.0), run with Transformers.js (Apache 2.0) in a worker, on the graphics card when it can.
    The weights are downloaded once on request (about 1.8 GB) into the user profile; then it works offline like the rest of Mathbench. */
+/* what only the desktop app can do (read words in a picture, the Word Problem Reader): its own bridge in the main window,
+   or the overlay's, asked by message, for the Solver widget inside the overlay */
+const PL = () => window.mbDesktop || window.mbPlugin || null;
 const MathAI = (function () {
-  const D = () => window.mbDesktop;
-  const MODELS = D() ? 'mathbench://app/models/' : '/_models/';   /* the second only for testing the page on its own */
+  const D = PL;
+  const MODELS = location.protocol === 'mathbench:' ? 'mathbench://app/models/' : '/_models/';   /* the second only for testing the page on its own */
   const SYS = 'You turn a maths word problem into input for a calculator.\n' +
     'Reply with exactly two lines and nothing else:\n' +
     'line 1: the equation to solve (use x for the unknown asked for; for two unknowns use x and y and separate the equations with ;), or a plain calculation if nothing is unknown\n' +
@@ -5842,9 +5845,9 @@ function fillBox(text, note, thumb) {
   expr.focus();
 }
 /* word problems in pictures: Windows' text reader reads the words (desktop app only); the option is remembered */
-const wordPics = () => !!(window.mbDesktop && window.mbDesktop.ocrImage) && store('mb-wordpics') !== false;
+const wordPics = () => !!(PL() && PL().ocrImage) && store('mb-wordpics') !== false;
 async function pictureWords(canvas) {
-  try { const r = await window.mbDesktop.ocrImage(canvas.toDataURL('image/png')); return (r && r.lines || []).join(' ').replace(/\s+/g, ' ').trim(); } catch (e) { return ''; }
+  try { const r = await PL().ocrImage(canvas.toDataURL('image/png')); return (r && r.lines || []).join(' ').replace(/\s+/g, ' ').trim(); } catch (e) { return ''; }
 }
 /* the caption under a picture, with a button to read it the other way */
 function showCapSwitch(img, msg, label, way) {
@@ -5880,7 +5883,7 @@ async function readPicture(canvas, _unused, opts) {
       onReading: () => showCap(thumb, 'Reading the formula…')
     });
     /* the words were read too: if there are sentences in it, it may still be a word problem */
-    const sw = window.mbDesktop && window.mbDesktop.ocrImage ? ['Read it as a word problem instead', 'words'] : [null, null];
+    const sw = PL() && PL().ocrImage ? ['Read it as a word problem instead', 'words'] : [null, null];
     if (r && r.tex) {
       fillBox(r.tex, r.minP < 0.45
         ? 'Some symbols were hard to make out. Check it matches the picture and fix anything wrong, then press Solve.'
@@ -6047,6 +6050,17 @@ function boot() {
 (function embedBridge() {
   const q = new URLSearchParams(location.search);
   if (q.get('embed') === '1') document.documentElement.classList.add('embed');
+  /* inside the overlay: ask it for what the app can do */
+  if (q.get('embed') === '1' && window.parent !== window && !window.mbDesktop) {
+    let seq = 0; const waiting = new Map(), progress = [];
+    const ask = (fn, args) => new Promise((ok, bad) => { const id = ++seq; waiting.set(id, { ok: ok, bad: bad }); window.parent.postMessage({ mb: 1, type: 'rpc', id: id, fn: fn, args: args || [] }, '*'); });
+    window.addEventListener('message', e => {
+      if (e.source !== window.parent || !e.data || e.data.mb !== 1) return;
+      if (e.data.type === 'rpc-ret') { const w = waiting.get(e.data.id); if (!w) return; waiting.delete(e.data.id); if (e.data.ok) w.ok(e.data.value); else w.bad(new Error(e.data.value)); }
+      else if (e.data.type === 'ai-progress') progress.forEach(cb => { try { cb(e.data.p); } catch (x) { /* ignore */ } });
+    });
+    window.mbPlugin = { ocrImage: d => ask('ocrImage', [d]), aiStatus: () => ask('aiStatus'), aiDownload: () => ask('aiDownload'), aiCancel: () => { ask('aiCancel').catch(() => {}); }, onAiProgress: cb => { progress.push(cb); } };
+  }
   window.addEventListener('message', e => {
     if (e.source !== window.parent || e.source === window) return;
     const d = e.data;
@@ -6055,7 +6069,7 @@ function boot() {
     else if (d.type === 'text' && typeof d.text === 'string') { gcSetView('solver'); setMode('auto'); expr.value = d.text.slice(0, 4000); updatePreview(); if (d.run) go(); }
     else if (d.type === 'image' && typeof d.data === 'string' && d.data.indexOf('data:image/') === 0) {
       const im = new Image();
-      im.onload = () => { const c = document.createElement('canvas'); c.width = im.naturalWidth; c.height = im.naturalHeight; c.getContext('2d').drawImage(im, 0, 0); gcSetView('solver'); readPicture(c); };
+      im.onload = () => { const c = document.createElement('canvas'); c.width = im.naturalWidth; c.height = im.naturalHeight; c.getContext('2d').drawImage(im, 0, 0); gcSetView('solver'); readPicture(c, undefined, d.as === 'words' || d.as === 'math' ? { as: d.as } : {}); };
       im.src = d.data;
     }
   });

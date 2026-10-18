@@ -27,7 +27,7 @@ function serveApp() {
 }
 
 const DEFAULTS = { hotkey: 'Control+Alt+M', mode: 'math', pasteHotkey: 'Control+Alt+P' };
-const MODES = ['math', 'copy', 'save', 'paste'];
+const MODES = ['math', 'word', 'copy', 'save', 'paste'];
 let cfg = Object.assign({}, DEFAULTS);
 let mainWin = null, overlayWin = null, settingsWin = null, tray = null, quitting = false;
 let shot = null; // { img: NativeImage, display }
