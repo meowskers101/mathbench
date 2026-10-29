@@ -324,7 +324,7 @@ ipcMain.on('assist:place', async (_e, steps) => {
   for (const st of steps) {
     if (st.onenote) {
       const cx = o.x + P(st.x), cy = o.y + P(st.y);
-      r = await helperCall('act', { hwnd: wnd, keepMouse: true, steps: [{ do: 'key', key: 'ESC' }, { do: 'click', x: cx, y: cy }, { do: 'wait', ms: 250 }, { do: 'text', text: String(st.text) }, { do: 'wait', ms: 350 }] }, 30000);
+      r = await helperCall('act', { hwnd: wnd, keepMouse: true, steps: [{ do: 'key', key: 'ESC' }, { do: 'click', x: cx, y: cy }, { do: 'wait', ms: 250 }].concat(oneNoteTyping(String(st.text)), [{ do: 'wait', ms: 350 }]) }, 30000);
       const h = await helperCall('handle', { x: cx, y: cy }, 8000);
       if (h && h.x != null) {
         const tx = o.x + P(st.tx), ty = o.y + P(st.ty);
@@ -348,6 +348,28 @@ ipcMain.on('assist:place', async (_e, steps) => {
   if (r && r.error) notify('Mathbench could not type the answer', 'Click the box and try again.');
   else notify(steps.length === 1 ? 'Put ' + steps[0].text : 'Answered ' + steps.length + ' problems', steps.map(x => (x.label ? x.label + ': ' : '') + x.text).join('   '));
 });
+
+/* OneNote: each line of maths is typed as a OneNote equation, so it shows like written maths (fractions stacked, powers raised):
+   Alt+= starts an equation, the line is typed in OneNote's linear maths, a space builds it up, and two right arrows leave it.
+   Lines of words ("Subtract 5 from both sides", "The answer is x = 6.") are typed as they are */
+const FN_WORDS = /^(?:sin|cos|tan|cot|sec|csc|log|ln|sqrt|exp|abs|lim|min|max)$/i;
+function isMathsLine(t) {
+  const s = String(t).trim();
+  if (!s || !/[0-9=+\-−×÷*/^²³√<>≤≥]/.test(s)) return false;
+  return !(s.match(/[A-Za-z]{2,}/g) || []).some(w => !FN_WORDS.test(w));
+}
+function oneNoteTyping(text) {
+  const acts = [];
+  String(text).split('\n').forEach((line, i) => {
+    if (i) acts.push({ do: 'key', key: 'ENTER' });
+    if (!isMathsLine(line)) { if (line) acts.push({ do: 'text', text: line }); return; }
+    /* in an equation the no-break spaces that stop OneNote's own sums are not needed, and spacing is OneNote's */
+    const maths = line.replace(/ /g, ' ').replace(/\s+/g, ' ').trim();
+    acts.push({ do: 'key', key: 'EQUALS', alt: true }, { do: 'wait', ms: 250 }, { do: 'text', text: maths + ' ' }, { do: 'wait', ms: 120 },
+      { do: 'key', key: 'RIGHT' }, { do: 'key', key: 'RIGHT' });
+  });
+  return acts;
+}
 
 /* ---------- plugins: the Word Problem Reader (Qwen2.5 1.5B Instruct, Apache 2.0), downloaded once on request ---------- */
 /* the model's weights split into chunks the browser engine can load; size and SHA-256 of each, checked once installed */

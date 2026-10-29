@@ -52,15 +52,15 @@ public static void Hover(int x, int y) { SetCursorPos(x, y); }
 /* type any text as real keystrokes: works in boxes that ignore pasting (maths editors, some quiz sites) */
 public static void Type(string s) {
   foreach (char ch in s) {
-    if (ch == '\n') { Key(0x0D, false, false); continue; }
+    if (ch == '\n') { Key(0x0D, false, false, false); continue; }
     Send(Kbd(0, ch, 0x4)); Send(Kbd(0, ch, 0x4 | 0x2)); System.Threading.Thread.Sleep(12);
   }
 }
-public static void Key(ushort vk, bool ctrl, bool shift) {
-  if (ctrl) Send(Kbd(0x11, 0, 0)); if (shift) Send(Kbd(0x10, 0, 0));
+public static void Key(ushort vk, bool ctrl, bool shift, bool alt) {
+  if (ctrl) Send(Kbd(0x11, 0, 0)); if (shift) Send(Kbd(0x10, 0, 0)); if (alt) Send(Kbd(0x12, 0, 0));
   uint ext = (vk >= 0x21 && vk <= 0x2E) ? 1u : 0u;
   Send(Kbd(vk, 0, ext)); Send(Kbd(vk, 0, ext | 0x2));
-  if (shift) Send(Kbd(0x10, 0, 0x2)); if (ctrl) Send(Kbd(0x11, 0, 0x2));
+  if (alt) Send(Kbd(0x12, 0, 0x2)); if (shift) Send(Kbd(0x10, 0, 0x2)); if (ctrl) Send(Kbd(0x11, 0, 0x2));
   System.Threading.Thread.Sleep(20);
 }
 '@
@@ -155,9 +155,9 @@ function Find-Controls([Int64]$hwnd) {
   return $out
 }
 
-$VK = @{ ENTER = 0x0D; TAB = 0x09; ESC = 0x1B; ESCAPE = 0x1B; SPACE = 0x20; BACKSPACE = 0x08; DELETE = 0x2E; LEFT = 0x25; UP = 0x26; RIGHT = 0x27; DOWN = 0x28; HOME = 0x24; END = 0x23; PAGEDOWN = 0x22; PAGEUP = 0x21; A = 0x41 }
+$VK = @{ ENTER = 0x0D; TAB = 0x09; ESC = 0x1B; ESCAPE = 0x1B; SPACE = 0x20; BACKSPACE = 0x08; DELETE = 0x2E; LEFT = 0x25; UP = 0x26; RIGHT = 0x27; DOWN = 0x28; HOME = 0x24; END = 0x23; PAGEDOWN = 0x22; PAGEUP = 0x21; A = 0x41; EQUALS = 0xBB }
 
-# steps: click {x,y}, text {text}, key {key, ctrl, shift}, scroll {x,y,n}, wait {ms}
+# steps: click {x,y}, text {text}, key {key, ctrl, shift, alt}, scroll {x,y,n}, wait {ms}
 function Run-Steps($steps, [Int64]$hwnd) {
   $p = New-Object MBH.U+P; [void][MBH.U]::GetCursorPos([ref]$p)
   if ($hwnd -ne 0) { [void][MBH.U]::Front([IntPtr]$hwnd); Start-Sleep -Milliseconds 150 }
@@ -166,7 +166,7 @@ function Run-Steps($steps, [Int64]$hwnd) {
     switch ($s.do) {
       'click' { [MBH.U]::Click([int]$s.x, [int]$s.y, [bool]$s.double); Start-Sleep -Milliseconds 160 }
       'text' { [MBH.U]::Type([string]$s.text); Start-Sleep -Milliseconds 60 }
-      'key' { $k = $VK[([string]$s.key).ToUpper()]; if ($k) { [MBH.U]::Key([uint16]$k, [bool]$s.ctrl, [bool]$s.shift) }; Start-Sleep -Milliseconds 60 }
+      'key' { $k = $VK[([string]$s.key).ToUpper()]; if ($k) { [MBH.U]::Key([uint16]$k, [bool]$s.ctrl, [bool]$s.shift, [bool]$s.alt) }; Start-Sleep -Milliseconds 60 }
       'scroll' { [MBH.U]::Wheel([int]$s.x, [int]$s.y, [int]$s.n); Start-Sleep -Milliseconds 250 }
       'drag' { [MBH.U]::Drag([int]$s.x, [int]$s.y, [int]$s.x2, [int]$s.y2); Start-Sleep -Milliseconds 200 }
       'hover' { [MBH.U]::Hover([int]$s.x, [int]$s.y); Start-Sleep -Milliseconds 250 }
